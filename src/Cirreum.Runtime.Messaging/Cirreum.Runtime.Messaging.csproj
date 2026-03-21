@@ -6,7 +6,7 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="Cirreum.Core" Version="2.0.6" />
+		<PackageReference Include="Cirreum.Core" Version="2.0.7" />
 		<PackageReference Include="Cirreum.Messaging.Azure" Version="1.0.10" />
 		<PackageReference Include="Cirreum.Runtime.ServiceProvider" Version="1.0.9" />
 		<PackageReference Include="Cirreum.Startup" Version="1.0.112" />
