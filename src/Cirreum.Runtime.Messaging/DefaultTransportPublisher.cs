@@ -58,6 +58,11 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 	private readonly string _producerId;
 
 	/// <summary>
+	/// Provider of the current process replica's node identity
+	/// </summary>
+	private readonly INodeIdProvider _nodeIdProvider;
+
+	/// <summary>
 	/// Name of the topic used for sending notification messages
 	/// </summary>
 	private readonly string _topicName;
@@ -84,6 +89,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 	/// <param name="batchProcessor">Processor for batched message delivery</param>
 	/// <param name="registry">Registry for message type definitions</param>
 	/// <param name="environment">The current <see cref="IDomainEnvironment"/></param>
+	/// <param name="nodeIdProvider">Provider of the current replica's node identity, stamped on every outgoing message for self-echo prevention.</param>
 	/// <param name="options">Configuration options for message distribution</param>
 	/// <param name="logger">Logger for recording publisher events and errors</param>
 	/// <param name="metricsService">Service for recording messaging metrics</param>
@@ -92,6 +98,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 		IBatchProcessor batchProcessor,
 		IMessageRegistry registry,
 		IDomainEnvironment environment,
+		INodeIdProvider nodeIdProvider,
 		IOptions<DistributionOptions> options,
 		ILogger<DefaultTransportPublisher> logger,
 		IMessagingMetricsService metricsService) {
@@ -101,6 +108,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 		this._logger = logger;
 		this._metricsService = metricsService;
 		this._registry = registry;
+		this._nodeIdProvider = nodeIdProvider;
 
 		// Resolve the message client
 		var instanceKey = options.Value.Sender.InstanceKey;
@@ -164,6 +172,16 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 			var outboundMessage = OutboundMessage
 				.AsJsonContent(envelope)
 				.WithSubject(subject);
+
+			// Stamp cross-broker filterable metadata as application properties.
+			// Each broker maps OutboundMessage.Properties to its native filterable
+			// property bag (Service Bus ApplicationProperties, AWS SNS message
+			// attributes, Kafka headers, NATS headers). Filter expressions live in
+			// infrastructure-as-code per deployment.
+			outboundMessage.Properties[DistributeMessagingStrings.Property_Identifier] = definition.Identifier;
+			outboundMessage.Properties[DistributeMessagingStrings.Property_Version] = definition.Version;
+			outboundMessage.Properties[DistributeMessagingStrings.Property_Producer] = this._producerId;
+			outboundMessage.Properties[DistributeMessagingStrings.Property_Node] = this._nodeIdProvider.NodeId;
 
 			// Background (parallel) processing...
 			if (message.UseBackgroundDelivery ?? this.useBackgroundDeliveryByDefault) {

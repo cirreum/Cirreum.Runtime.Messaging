@@ -8,6 +8,11 @@
     <File Path="build/SourceLink.props" />
     <File Path="build/Versioning.props" />
   </Folder>
+  <Folder Name="/docs/">
+    <File Path="docs/CHANGELOG.md" />
+    <File Path="docs/RELEASE-NOTES-v1.1.0.md" />
+    <File Path="src/Cirreum.Runtime.Messaging/CONFIGURATION_GUIDE.md" />
+  </Folder>
   <Folder Name="/publish/">
     <File Path=".github/workflows/publish.yml" />
   </Folder>

@@ -8,6 +8,7 @@ using Cirreum.Messaging.Options;
 using Cirreum.Runtime.Messaging;
 using Cirreum.Runtime.Messaging.Batching;
 using Cirreum.Runtime.Messaging.Metrics;
+using Cirreum.Runtime.Messaging.Receiving;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -59,6 +60,13 @@ public static class HostingExtensions {
 		builder.Services.Configure<MetricsOptions>(metricsSection);
 		builder.Services.AddSingleton<IMessagingMetricsService, DefaultMessagingMetricsService>();
 
+		// Register the default node-identity provider. Used by the publisher to stamp
+		// the `cirreum.node` application property on every outbound message and by
+		// the receiver (when configured) to skip self-echoes pre-deserialization.
+		// TryAdd so apps that need bespoke resolution can register their own
+		// INodeIdProvider before calling AddMessaging().
+		builder.Services.TryAddSingleton<INodeIdProvider, DefaultNodeIdProvider>();
+
 		// Register the Distributed Transport Publisher
 		var section = builder.Configuration.GetSection($"{DistributeMessagingStrings.ConfigurationKey}:{DistributionOptions.ConfigurationName}");
 		if (section.Exists()) {
@@ -86,6 +94,34 @@ public static class HostingExtensions {
 						typeof(DefaultTransportPublisher),
 						ServiceLifetime.Singleton)
 					);
+			}
+
+			// Register the Distributed Message Receiver — conditional on the
+			// Receiver configuration section being present with a valid
+			// InstanceKey and at least one source (Queue or Topic+Subscription).
+			var receiverSection = section.GetSection(ReceiverOptions.ConfigurationName);
+			if (receiverSection.Exists()) {
+
+				var receiverInstance = receiverSection.GetValue<string>(ReceiverOptions.ReceiverInstanceConfigurationName);
+				var queueName = receiverSection.GetValue<string>(ReceiverOptions.QueueConfigurationName);
+				var topicName = receiverSection.GetValue<string>(ReceiverOptions.TopicConfigurationName);
+				var subscriptionName = receiverSection.GetValue<string>(ReceiverOptions.SubscriptionConfigurationName);
+
+				var hasQueue = !string.IsNullOrEmpty(queueName);
+				var hasTopicPair = !string.IsNullOrEmpty(topicName) && !string.IsNullOrEmpty(subscriptionName);
+
+				if (!string.IsNullOrEmpty(receiverInstance) && (hasQueue || hasTopicPair)) {
+
+					// Bind options
+					builder.Services
+						.AddOptions<ReceiverOptions>()
+							.Bind(receiverSection);
+
+					// Register the receiver (single instance; IHostedService).
+					builder.Services.AddSingleton<DistributedMessageReceiver>();
+					builder.Services.AddSingleton<IHostedService>(sp =>
+						sp.GetRequiredService<DistributedMessageReceiver>());
+				}
 			}
 		}
 
