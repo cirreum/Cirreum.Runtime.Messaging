@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-05-10
+
 ### Added
 
 - **`Cirreum.Runtime.Messaging.Receiving.DistributedMessageReceiver`** — new `IHostedService` that consumes inbound distributed messages from a configured queue and/or topic subscription, deserializes them, and dispatches them through Conductor by publishing `DistributedMessageReceived<TMessage>` notifications. Apps implement standard `INotificationHandler<DistributedMessageReceived<T>>` handlers (auto-discovered by Conductor) to react. The receiver runs concurrent consumer loops per configured source, applies per-source `MaxConcurrency` via `Parallel.ForEachAsync`, skips self-echoes pre-deserialization via the `cirreum.node` application property, and handles unknown types / deserialization failures / handler failures with broker-appropriate semantics (complete / dead-letter / abandon). Registered conditionally based on the presence and completeness of the `Cirreum:Messaging:Distribution:Receiver` configuration section.
