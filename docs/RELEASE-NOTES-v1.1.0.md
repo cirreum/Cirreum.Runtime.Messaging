@@ -2,7 +2,7 @@
 
 Completes the inbound side of the Cirreum distributed messaging family. The hosted receiver consumes messages from a configured queue and/or topic subscription, deserializes them, and dispatches them through Conductor — handlers are ordinary `INotificationHandler<DistributedMessageReceived<T>>` implementations, auto-discovered the same way every other Cirreum notification handler is.
 
-The L3 abstractions consumed by this release shipped in `Cirreum.Core 5.2.0`: `INodeIdProvider`, `DefaultNodeIdProvider`, `DistributedMessageReceived<TMessage>`, `ReceiverOptions`, and `DistributedMessageEnvelope.PublishedAt`. This package wires those into a runtime that apps can opt into via appsettings, with sender-side application-property enrichment that makes broker-side routing and self-echo filtering possible.
+The abstractions consumed by this release shipped in `Cirreum.Core 5.2.0`: `INodeIdProvider`, `DefaultNodeIdProvider`, `DistributedMessageReceived<TMessage>`, `ReceiverOptions`, and `DistributedMessageEnvelope.PublishedAt`. This package wires those into a runtime that apps can opt into via appsettings, with sender-side application-property enrichment that makes broker-side routing and self-echo filtering possible.
 
 Strictly additive on the send side. New receiver registration is opt-in via configuration.
 
@@ -178,7 +178,7 @@ Structured logging covers receiver lifecycle (`ReceiverStarting`, `ReceiverStopp
 
 **Sender-only deployments are unaffected.** Apps that don't add a `Receiver` section in configuration get no receiver and no behavior change — only the sender's four new application properties on outbound messages (which existing consumers ignore).
 
-**Receiver requires `Cirreum.Core 5.2.0+`.** The L3 abstractions consumed (`INodeIdProvider`, `DefaultNodeIdProvider`, `DistributedMessageReceived<TMessage>`, `ReceiverOptions`, `DistributedMessageEnvelope.PublishedAt`) are introduced in that release. `Cirreum.Runtime.Messaging` 1.1.0's `<PackageReference>` pins `Cirreum.Core 5.2.0`.
+**Receiver requires `Cirreum.Core 5.2.0+`.** The abstractions consumed (`INodeIdProvider`, `DefaultNodeIdProvider`, `DistributedMessageReceived<TMessage>`, `ReceiverOptions`, `DistributedMessageEnvelope.PublishedAt`) are introduced in that release. `Cirreum.Runtime.Messaging` 1.1.0's `<PackageReference>` pins `Cirreum.Core 5.2.0`.
 
 **Per-replica subscription rules referencing `cirreum.node`.** Service Bus subscription rules can reference `cirreum.node` for static filtering (e.g., excluding a specific known-bad replica), but typically don't — in-process self-echo filtering is cheap and dynamic. Use broker rules for routing by identifier / producer; use in-process filtering for node-level self-echo.
 
@@ -210,5 +210,5 @@ The receiver does the mechanical work — receive, deserialize, wrap, publish, a
 ## See also
 
 - `CHANGELOG.md` — condensed change list for `1.1.0`.
-- `Cirreum.Core 5.2.0` release notes — full architectural framing of the L3 abstractions this release consumes.
+- `Cirreum.Core 5.2.0` release notes — full architectural framing of the abstractions this release consumes.
 - `CONFIGURATION_GUIDE.md` — full sender + receiver configuration reference.

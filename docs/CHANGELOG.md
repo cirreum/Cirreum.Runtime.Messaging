@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`DefaultTransportPublisher` constructor** — now also takes `INodeIdProvider` to source the per-replica node identity for the new `cirreum.node` application property. Hosting extension wires this automatically; no app code change required.
 - **`DistributeMessagingStrings`** — added constants for the four outbound application-property keys, the receive activity name, and receive-side event names (`Event_SelfEchoSkipped`, `Event_UnknownMessageType`, `Event_EnvelopeDeserializationFailed`, `Event_MessageDispatched`). Centralized to keep all wire-protocol strings together.
 
-These additions complete the inbound side of the distributed messaging family. The L3 abstractions consumed by this release shipped in `Cirreum.Core 5.2.0`: `INodeIdProvider`, `DefaultNodeIdProvider`, `DistributedMessageReceived<TMessage>`, `ReceiverOptions`, and `DistributedMessageEnvelope.PublishedAt`. See [`docs/RELEASE-NOTES-v1.1.0.md`](RELEASE-NOTES-v1.1.0.md) for the full architectural framing, configuration shape, routing convention, and operational guidance.
+These additions complete the inbound side of the distributed messaging family. The abstractions consumed by this release shipped in `Cirreum.Core 5.2.0`: `INodeIdProvider`, `DefaultNodeIdProvider`, `DistributedMessageReceived<TMessage>`, `ReceiverOptions`, and `DistributedMessageEnvelope.PublishedAt`. See [`docs/RELEASE-NOTES-v1.1.0.md`](RELEASE-NOTES-v1.1.0.md) for the full architectural framing, configuration shape, routing convention, and operational guidance.
 
 ## [1.0.39] - 2026-05-10
 
