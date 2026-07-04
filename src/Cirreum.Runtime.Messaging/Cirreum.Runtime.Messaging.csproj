@@ -14,4 +14,9 @@
 		<PackageReference Include="Cirreum.Startup" Version="1.0.116" />
 	</ItemGroup>
 
+	<!-- InternalsVisibleTo: Local Development Only -->
+	<ItemGroup Label="InternalsVisibleTo" Condition="'$(IsLocalBuild)' == 'true'">
+		<InternalsVisibleTo Include="Cirreum.Runtime.Messaging.Tests" />
+	</ItemGroup>
+
 </Project>
