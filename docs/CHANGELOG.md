@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Receiver type resolution** — inbound type resolution now uses `DistributedMessageEnvelope.ResolveMessageType()` (from `Cirreum.Messaging.Distributed 1.1.0`) instead of raw `Type.GetType`, so app-defined message types resolve correctly across assemblies (both the new assembly-hinted envelope format and legacy bare full names).
 - **Idle efficiency** — the delivery loop now waits for the first buffered message before evaluating the batching policy and opening a fill window, instead of polling on a timer while the queue is empty.
 - **Batch capacity metrics** — batch-level metrics and trace tags now report the policy-decided capacity rather than the internal list's allocated capacity.
 

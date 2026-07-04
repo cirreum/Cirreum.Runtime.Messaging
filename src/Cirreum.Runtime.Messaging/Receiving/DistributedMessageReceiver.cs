@@ -206,13 +206,9 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 			return;
 		}
 
-		// 3. .NET type resolution
-		Type? messageType = null;
-		try {
-			messageType = Type.GetType(envelope.MessageType);
-		} catch {
-			// fall through with null
-		}
+		// 3. .NET type resolution — ResolveMessageType handles the assembly-hinted
+		// format, legacy bare full names, and malformed wire input (null, no throw).
+		var messageType = envelope.ResolveMessageType();
 
 		if (messageType is null) {
 			this._logger.UnknownMessageType(
