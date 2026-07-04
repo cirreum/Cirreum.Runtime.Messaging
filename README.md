@@ -121,7 +121,7 @@ public sealed class OrderService(IPublisher publisher) {
 }
 ```
 
-`InstanceKey` names the keyed `IMessagingClient` registration from the transport provider's `Cirreum:Messaging:Providers` configuration. See the [Configuration Guide](docs/CONFIGURATION.md) for every setting, defaults, and provider-instance configuration.
+`InstanceKey` names the keyed `IMessagingClient` registration from the transport provider's `Cirreum:Messaging:Providers` configuration. See the [Configuration Guide](https://github.com/cirreum/Cirreum.Runtime.Messaging/blob/main/docs/CONFIGURATION.md) for every setting, defaults, and provider-instance configuration.
 
 ### Custom Batching Policy
 
@@ -203,13 +203,13 @@ The envelope properties available to every handler:
 | `ProducerId` | Head/app identity that published — useful for audit |
 | `PublishedAt` | UTC timestamp captured at envelope creation — useful for latency metrics or replay detection (nullable for envelopes from older senders) |
 
-See the [Configuration Guide](docs/CONFIGURATION.md) for the receiver's full settings and queue-vs-subscription semantics.
+See the [Configuration Guide](https://github.com/cirreum/Cirreum.Runtime.Messaging/blob/main/docs/CONFIGURATION.md) for the receiver's full settings and queue-vs-subscription semantics.
 
 ## Documentation
 
-- [Configuration Guide](docs/CONFIGURATION.md) — every channel, background-delivery, receiver, metrics, and provider setting with defaults
-- [Migration Guide (v1 → v2)](docs/MIGRATION-v2.md) — breaking changes and the find/replace table for the 2.0 foundation-reset release
-- [Changelog](docs/CHANGELOG.md)
+- [Configuration Guide](https://github.com/cirreum/Cirreum.Runtime.Messaging/blob/main/docs/CONFIGURATION.md) — every channel, background-delivery, receiver, metrics, and provider setting with defaults
+- [Migration Guide (v1 → v2)](https://github.com/cirreum/Cirreum.Runtime.Messaging/blob/main/docs/MIGRATION-v2.md) — breaking changes and the find/replace table for the 2.0 foundation-reset release
+- [Changelog](https://github.com/cirreum/Cirreum.Runtime.Messaging/blob/main/docs/CHANGELOG.md)
 
 ## Contribution Guidelines
 
