@@ -222,6 +222,27 @@ The envelope properties available to every handler:
 
 See the [Configuration Guide](https://github.com/cirreum/Cirreum.Runtime.Messaging/blob/main/docs/CONFIGURATION.md) for the receiver's full settings and queue-vs-subscription semantics.
 
+## Choosing a Dispatch Path
+
+`[MessageVersion]` + `DistributedMessage` define a *wire contract*. Publishing through Conductor is one *transport* for that contract, not the only one — three patterns are valid, and serious business workflows often outgrow the first:
+
+| Pattern | Wire contract | Routing & consumption | Right for |
+|---|---|---|---|
+| **Full framework** | `[MessageVersion]` + `DistributedMessage` | `IPublisher.PublishAsync()` → the channel's configured queue/topic; inbound via Conductor handlers | Cross-head state convergence, registry sync, kill switches — "one event, many handlers may react" |
+| **App-routed, framework-formatted** | `[MessageVersion]` + `DistributedMessage` | App-built envelope via `IMessagingClient` to app-chosen queues; app-owned consumer loops | High-volume operational workflows (email, payments, document processing) needing per-workflow queues and tuning |
+| **Fully bespoke** | Ad-hoc message classes | Raw `IMessagingClient` end-to-end | Legacy integration, external broker conventions, extreme tuning |
+
+The framework path funnels everything through the channel's single configured queue/topic — deliberately, for framework-level eventing. When a workflow needs its own queue, keep Cirreum's envelope vocabulary (stable identifier + version, producer id, publish timestamp, resolvable type) and route it yourself (pattern 2):
+
+```csharp
+var envelope = DistributedMessageEnvelope.Create(order, definition, producerId);
+await messagingClient
+	.UseQueueSender("orders.processing.v1")
+	.PublishMessageAsync(OutboundMessage.AsJsonContent(envelope).WithSubject("orders.created.v1.0"));
+```
+
+Consumers on that queue can still re-materialize the payload with `envelope.ResolveMessageType()` / `DeserializeMessage<T>()`, and audit/observability tooling reads the same envelope shape across all three patterns.
+
 ## Documentation
 
 - [Configuration Guide](https://github.com/cirreum/Cirreum.Runtime.Messaging/blob/main/docs/CONFIGURATION.md) — every channel, background-delivery, receiver, metrics, and provider setting with defaults
