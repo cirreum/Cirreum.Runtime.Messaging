@@ -6,24 +6,23 @@
 [![License](https://img.shields.io/badge/license-MIT-F2F2F2?style=flat-square&labelColor=1F1F1F)](https://github.com/cirreum/Cirreum.Runtime.Messaging/blob/main/LICENSE)
 [![.NET](https://img.shields.io/badge/.NET-10.0-003D8F?style=flat-square&labelColor=1F1F1F)](https://dotnet.microsoft.com/)
 
-**High-performance distributed messaging with advanced batching and observability for .NET applications**
+**High-performance distributed messaging with policy-driven batching and observability for .NET applications**
 
 ## Overview
 
-**Cirreum.Runtime.Messaging** provides a sophisticated distributed messaging infrastructure for .NET applications, featuring intelligent batching, priority-based delivery, and comprehensive observability. Built on the Cirreum Foundation Framework, it offers both synchronous and asynchronous message delivery patterns with built-in resilience and monitoring capabilities.
+**Cirreum.Runtime.Messaging** is the runtime delivery engine for Cirreum's distributed-messaging channel. The messaging *model* — `DistributedMessage`, the wire envelope, the registry, and the `IBatchingPolicy` strategy — ships in `Cirreum.Messaging.Distributed`; this package provides the moving parts: the outbound Conductor bridge, the batching processor, the transport publisher, the inbound receiver, and OpenTelemetry metrics. It offers both synchronous and asynchronous message delivery patterns with built-in resilience and monitoring capabilities.
 
 ## Key Features
 
 ### 🚀 Flexible Message Delivery
-- **Dual-mode publishing**: Direct (synchronous) and background (asynchronous) delivery
+- **Dual-mode publishing**: Direct (synchronous) and background (batched) delivery, per message or by channel default
 - **Transport abstraction**: Pluggable providers (Azure Service Bus included)
-- **Message targeting**: Support for both queue-based events and topic-based notifications
+- **Message targeting**: Support for both queue-based events and topic-based notifications via `[DistributedMessageTarget]`
 
-### 📦 Advanced Batching System
-- **Dynamic batch sizing**: Automatically adjusts based on load and time profiles
-- **Priority queuing**: High-priority messages with automatic promotion
+### 📦 Policy-Driven Batching System
+- **Pluggable batch sizing**: each batch's capacity and fill window come from the channel's `IBatchingPolicy`, fed live queue-depth, send-rate, and error-rate observables; the default policy passes the configured base values through
+- **Priority queuing**: High-priority messages with rate limiting and automatic age promotion
 - **Circuit breaker**: Built-in fault tolerance for resilient message delivery
-- **Configurable profiles**: Peak and off-peak batching strategies
 
 ### 📊 Comprehensive Observability
 - **OpenTelemetry integration**: Distributed tracing and metrics collection
@@ -55,40 +54,41 @@ dotnet add package Cirreum.Runtime.Messaging
 ### Basic Setup
 
 ```csharp
-var builder = Host.CreateApplicationBuilder(args);
+var builder = DomainApplication.CreateBuilder(args);
 
-// Add distributed messaging with metrics
-builder.AddDistributedMessaging()
-	   .AddDistributedMessagingMetrics();
+// Registers the Service Bus provider, the delivery engine, the outbound
+// Conductor bridge, and (when configured) the inbound receiver.
+builder.AddMessaging();
 
-// Add Azure Service Bus as the transport provider
-builder.AddAzureServiceBusProvider();
-
-var host = builder.Build();
-await host.RunAsync();
+var app = builder.Build();
+await app.RunAsync();
 ```
 
-### Publishing Messages
+### Defining and Publishing Messages
+
+Messages derive from `DistributedMessage`, declare their wire contract with `[MessageVersion]`, and optionally pick a routing target (topic is the default):
 
 ```csharp
-public class OrderService
-{
-	private readonly IDistributedMessagePublisher _publisher;
+[MessageVersion("orders.created", "1.0")]
+[DistributedMessageTarget(MessageTarget.Queue)]
+public sealed record OrderCreatedEvent(string OrderId) : DistributedMessage;
+```
 
-	public OrderService(IDistributedMessagePublisher publisher)
-	{
-		_publisher = publisher;
-	}
+Publish through Conductor — the outbound bridge forwards any published `DistributedMessage` to the configured transport automatically:
 
-	public async Task ProcessOrderAsync(Order order)
-	{
-		// Publish directly (synchronous)
-		await _publisher.PublishAsync(new OrderCreatedEvent(order.Id));
+```csharp
+public sealed class OrderService(IPublisher publisher) {
 
-		// Publish in background (batched)
-		await _publisher.PublishInBackgroundAsync(
-			new OrderNotification(order.Id), 
-			DistributedMessagePriority.Normal);
+	public async Task ProcessOrderAsync(Order order) {
+
+		// Delivered per the channel default (direct or batched)
+		await publisher.PublishAsync(new OrderCreatedEvent(order.Id));
+
+		// Opt a specific message into batched background delivery
+		await publisher.PublishAsync(new OrderCreatedEvent(order.Id) {
+			UseBackgroundDelivery = true,
+			Priority = DistributedMessagePriority.TimeSensitive
+		});
 	}
 }
 ```
@@ -97,25 +97,42 @@ public class OrderService
 
 ```json
 {
-  "DistributedMessaging": {
-	"BackgroundDelivery": {
-	  "Enabled": true,
-	  "MaxBatchSize": 100,
-	  "MaxQueueSize": 10000,
-	  "DeliveryTimeout": "00:00:30",
-	  "CircuitBreaker": {
-		"FailureThreshold": 5,
-		"BreakDuration": "00:01:00"
+  "Cirreum": {
+	"Messaging": {
+	  "Distributed": {
+		"InstanceKey": "app-primary",
+		"QueueName": "app-events",
+		"TopicName": "app-notifications",
+		"BackgroundDelivery": {
+		  "UseBackgroundDeliveryByDefault": true,
+		  "QueueCapacity": 1000,
+		  "BatchCapacity": 10,
+		  "BatchFillWaitTime": "00:00:00.0500000",
+		  "CircuitBreakerThreshold": 5,
+		  "CircuitResetTimeout": "00:01:00"
+		},
+		"Metrics": {
+		  "QueueDepthWarningThreshold": 500,
+		  "QueueDepthCriticalThreshold": 1000
+		}
 	  }
-	},
-	"Metrics": {
-	  "Enabled": true,
-	  "QueueDepthAlertThreshold": 1000,
-	  "AlertSuppressionPeriod": "00:05:00"
 	}
   }
 }
 ```
+
+`InstanceKey` names the keyed `IMessagingClient` registration from the transport provider's `Cirreum:Messaging:Providers` configuration.
+
+### Custom Batching Policy
+
+The default `IBatchingPolicy` passes the configured base values through unchanged. Apps that want dynamic batching (traffic-aware, queue-depth-aware, time-of-day) register their own policy before `AddMessaging()`:
+
+```csharp
+builder.Services.AddSingleton<IBatchingPolicy, TrafficAwareBatchingPolicy>();
+builder.AddMessaging();
+```
+
+Each batch, the processor calls `Evaluate(BatchingContext)` with the configured base values plus live observables (current queue depth, rolling send rate, rolling error rate) and applies the returned fill wait time and capacity.
 
 ### Consuming Inbound Messages *(added 1.1.0)*
 
@@ -125,7 +142,7 @@ Configure the receiver in appsettings:
 {
   "Cirreum": {
 	"Messaging": {
-	  "Distribution": {
+	  "Distributed": {
 		"Receiver": {
 		  "InstanceKey": "app-primary",
 		  "TopicName": "app.notifications.v1",
@@ -184,15 +201,9 @@ The envelope properties available to every handler:
 | `MessageVersion` | The version string (e.g., `"1"`) |
 | `MessageType` | The full .NET type name of the payload |
 | `ProducerId` | Head/app identity that published — useful for audit |
-| `PublishedAt` | UTC timestamp captured at envelope creation — useful for latency metrics or replay detection (nullable for envelopes from senders predating `Cirreum.Core 5.2.0`) |
+| `PublishedAt` | UTC timestamp captured at envelope creation — useful for latency metrics or replay detection (nullable for envelopes from older senders) |
 
 See [`docs/RELEASE-NOTES-v1.1.0.md`](docs/RELEASE-NOTES-v1.1.0.md) for the routing convention, multi-head topology, and operational notes.
-
-## Documentation
-
-- [Configuration Guide](CONFIGURATION_GUIDE.md) - Detailed configuration options and examples
-- [API Documentation](https://docs.cirreum.com/runtime/messaging) - Complete API reference
-- [Architecture Overview](https://docs.cirreum.com/runtime/messaging/architecture) - Design decisions and patterns
 
 ## Contribution Guidelines
 

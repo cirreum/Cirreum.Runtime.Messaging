@@ -16,18 +16,6 @@ internal static partial class MessagingLoggerExtensions {
 	public static partial void PublisherInitialized(this ILogger logger, string publisher, int capacity);
 
 	[LoggerMessage(
-		EventId = 1002,
-		Level = LogLevel.Information,
-		Message = "Publisher {publisher}: ActiveTimeBatchingProfile: {activeProfile}")]
-	public static partial void ActiveTimeBatchingProfile(this ILogger logger, string publisher, string activeProfile);
-
-	[LoggerMessage(
-		EventId = 1003,
-		Level = LogLevel.Information,
-		Message = "Publisher {publisher}: ActiveTimeBatchingProfile Profile: {profile}")]
-	public static partial void ActiveTimeBatchingProfileDetails(this ILogger logger, string publisher, string profile);
-
-	[LoggerMessage(
 		EventId = 1004,
 		Level = LogLevel.Information,
 		Message = "Publisher {publisher}: Background processor started with BatchCapacity: {batchCapacity} and BatchFillWaitTime: {batchFillWaitTime}")]
@@ -48,8 +36,8 @@ internal static partial class MessagingLoggerExtensions {
 	[LoggerMessage(
 		EventId = 1007,
 		Level = LogLevel.Debug,
-		Message = "Dynamic batch fill waitTime: {fillWaitTime} and capacity: {capacity}")]
-	public static partial void DynamicBatchParameters(this ILogger logger, TimeSpan fillWaitTime, int capacity);
+		Message = "Batching policy decided fill waitTime: {fillWaitTime} and capacity: {capacity}. Reason: {reason}")]
+	public static partial void BatchingPolicyDecision(this ILogger logger, TimeSpan fillWaitTime, int capacity, string? reason);
 
 	[LoggerMessage(
 		EventId = 1008,

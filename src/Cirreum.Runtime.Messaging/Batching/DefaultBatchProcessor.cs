@@ -1,6 +1,7 @@
-﻿namespace Cirreum.Runtime.Messaging.Batching;
+namespace Cirreum.Runtime.Messaging.Batching;
 
 using Cirreum.Messaging;
+using Cirreum.Messaging.Batching;
 using Cirreum.Messaging.Metrics;
 using Cirreum.Messaging.Options;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,16 +10,16 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using System.Diagnostics;
 using System.Threading.Channels;
-using TagNames = BathProcessorTagNames;
+using TagNames = BatchProcessorTagNames;
 
 /// <summary>
 /// Default implementation of <see cref="IBatchProcessor"/> that provides efficient batched message delivery
-/// with prioritization, rate limiting, circuit breaking, and dynamic scheduling.
+/// with prioritization, rate limiting, circuit breaking, and policy-driven batch sizing.
 /// </summary>
 /// <remarks>
 /// This class manages a background processing pipeline that:
 /// 1. Queues outbound messages in a priority-based channel
-/// 2. Dynamically adjusts batch size and timing based on load and time-of-day profiles
+/// 2. Sizes and times each batch via the channel's <see cref="IBatchingPolicy"/>
 /// 3. Applies circuit breaking to prevent cascading failures
 /// 4. Groups messages by type for parallel processing
 /// 5. Collects detailed metrics for monitoring and troubleshooting
@@ -36,9 +37,9 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 	private readonly MessagePrioritizer _messagePrioritizer;
 
 	/// <summary>
-	/// Scheduler that dynamically adjusts batch timing and capacity based on load
+	/// Strategy that decides the fill wait time and capacity for each batch
 	/// </summary>
-	private readonly BatchScheduler _batchScheduler;
+	private readonly IBatchingPolicy _batchingPolicy;
 
 	/// <summary>
 	/// Name of the topic used for sending notification messages
@@ -111,6 +112,27 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 	private readonly int maximumCircuitBreakerDelayMs = 5000; // 5s
 
 	/// <summary>
+	/// Length of the rolling window used to compute the send-rate and error-rate
+	/// observables handed to the <see cref="IBatchingPolicy"/>.
+	/// </summary>
+	private static readonly TimeSpan ObservationWindow = TimeSpan.FromSeconds(60);
+
+	/// <summary>
+	/// Start timestamp (Stopwatch ticks) of the current observation window
+	/// </summary>
+	private long _windowStartTimestamp = Stopwatch.GetTimestamp();
+
+	/// <summary>
+	/// Messages attempted (delivered + failed) within the current observation window
+	/// </summary>
+	private long _windowAttemptCount;
+
+	/// <summary>
+	/// Messages failed within the current observation window
+	/// </summary>
+	private long _windowFailureCount;
+
+	/// <summary>
 	/// Flag indicating whether the processor has been disposed
 	/// </summary>
 	private bool _disposed;
@@ -119,32 +141,35 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 	/// Initializes a new instance of the DefaultBatchProcessor class.
 	/// </summary>
 	/// <param name="serviceProvider">Service provider for resolving dependencies</param>
-	/// <param name="options">Configuration options for message distribution</param>
+	/// <param name="batchingPolicy">Strategy that decides per-batch fill wait time and capacity</param>
+	/// <param name="options">Configuration options for the distributed-messaging channel</param>
 	/// <param name="logger">Logger for recording processor events and errors</param>
 	/// <param name="metricsService">Service for recording messaging metrics</param>
 	public DefaultBatchProcessor(
 		IServiceProvider serviceProvider,
-		IOptions<DistributionOptions> options,
+		IBatchingPolicy batchingPolicy,
+		IOptions<DistributedMessagingOptions> options,
 		ILogger<DefaultBatchProcessor> logger,
 		IMessagingMetricsService metricsService) {
 
 		this._logger = logger;
 		this._metricsService = metricsService;
+		this._batchingPolicy = batchingPolicy;
 		this._processBatchActivity = new ActivitySource(DistributeMessagingStrings.MessagingNamespace);
 
 		// Resolve Messaging Client
-		var instanceKey = options.Value.Sender.InstanceKey;
+		var instanceKey = options.Value.InstanceKey;
 		if (string.IsNullOrWhiteSpace(instanceKey)) {
 			ArgumentException.ThrowIfNullOrWhiteSpace(instanceKey, nameof(instanceKey));
 		}
 		this._messagingClient = serviceProvider.GetRequiredKeyedService<IMessagingClient>(instanceKey);
 
 		// Get common metadata
-		this._topicName = options.Value.Sender.TopicName;
-		this._queueName = options.Value.Sender.QueueName;
+		this._topicName = options.Value.TopicName;
+		this._queueName = options.Value.QueueName;
 
 		// Initialize support for background delivery
-		this._deliveryOptions = options.Value.Sender.BackgroundDelivery;
+		this._deliveryOptions = options.Value.BackgroundDelivery;
 		this._circuitBreaker = new(
 			this._deliveryOptions.CircuitBreakerThreshold,
 			this._deliveryOptions.CircuitResetTimeout);
@@ -152,15 +177,6 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 			this._logger,
 			this._deliveryOptions.PriorityMessageRateLimit,
 			this._deliveryOptions.PriorityAgePromotionThreshold);
-		var activeProfileName = this._deliveryOptions.ActiveTimeBatchingProfile;
-		if (this._deliveryOptions.TimeBatchingProfiles.TryGetValue(activeProfileName, out var profile)) {
-			this._logger.ActiveTimeBatchingProfile(nameof(DefaultBatchProcessor), activeProfileName);
-			var profileDetailsJson = profile.ToJson();
-			this._logger.ActiveTimeBatchingProfileDetails(nameof(DefaultBatchProcessor), profileDetailsJson);
-			this._batchScheduler = new(profile);
-		} else {
-			this._batchScheduler = new();
-		}
 		this._channel = Channel.CreateBounded<BatchItem>(
 			new BoundedChannelOptions(this._deliveryOptions.QueueCapacity) {
 				FullMode = BoundedChannelFullMode.Wait,
@@ -291,6 +307,12 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 					continue;
 				}
 
+				// Wait until at least one message is buffered — no idle polling; the
+				// batching policy is evaluated per batch, not per empty tick.
+				if (!await this._channel.Reader.WaitToReadAsync(cancellationToken)) {
+					break;
+				}
+
 				// Normal batch processing
 				await this.FillBatchAndProcess(batch, cancellationToken);
 			}
@@ -310,26 +332,33 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 	/// <param name="cancellationToken">Token to monitor for cancellation requests</param>
 	/// <returns>A task representing the asynchronous operation</returns>
 	/// <remarks>
-	/// Uses dynamic scheduling to determine optimal batch size and wait time based
-	/// on current queue depth and time-of-day profiles.
+	/// The channel's <see cref="IBatchingPolicy"/> decides the fill wait time and batch
+	/// capacity for each batch, given the configured base values and the current
+	/// queue-depth / send-rate / error-rate observables.
 	/// </remarks>
 	private async Task FillBatchAndProcess(
 		List<BatchItem> batch,
 		CancellationToken cancellationToken) {
 
-		// Calculate dynamic wait time and capacity based on current load and timing
-		var (waitTime, capacity) = this._batchScheduler
-			.CalculateWaitTimeAndCapacity(
+		// Ask the batching policy for this batch's parameters
+		var (sendRate, errorRate) = this.SnapshotObservables();
+		var decision = this._batchingPolicy.Evaluate(new BatchingContext(
+			DateTimeOffset.UtcNow,
+			this._deliveryOptions.BatchFillWaitTime,
 			this._deliveryOptions.BatchCapacity,
 			this._channel.Reader.Count,
-			this._deliveryOptions.BatchFillWaitTime);
+			sendRate,
+			errorRate));
+		var waitTime = decision.FillWaitTime;
+		var capacity = Math.Max(1, decision.BatchCapacity);
 		batch.Clear();
-		batch.Capacity = capacity;
-		batch.Clear();
+		if (batch.Capacity < capacity) {
+			batch.Capacity = capacity;
+		}
 		var newBatchWaitAndFill = $"{waitTime}{capacity}";
-		if (lastBatchWaitAndFill != newBatchWaitAndFill) {
-			lastBatchWaitAndFill = newBatchWaitAndFill;
-			this._logger.DynamicBatchParameters(waitTime, capacity);
+		if (this.lastBatchWaitAndFill != newBatchWaitAndFill) {
+			this.lastBatchWaitAndFill = newBatchWaitAndFill;
+			this._logger.BatchingPolicyDecision(waitTime, capacity, decision.Reason);
 		}
 
 		// Set the batch deadline
@@ -371,7 +400,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 					batch.Count);
 			}
 
-			await this.ProcessBatchAsync(batch, cancellationToken);
+			await this.ProcessBatchAsync(batch, capacity, cancellationToken);
 		}
 	}
 
@@ -379,6 +408,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 	/// Processes a batch of messages, grouping them by message kind and sending them to the appropriate destinations.
 	/// </summary>
 	/// <param name="batch">The batch of messages to process</param>
+	/// <param name="batchCapacity">The policy-decided capacity this batch was filled against</param>
 	/// <param name="cancellationToken">Token to monitor for cancellation requests</param>
 	/// <returns>A task representing the asynchronous operation</returns>
 	/// <remarks>
@@ -388,6 +418,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 	/// </remarks>
 	private async Task ProcessBatchAsync(
 		List<BatchItem> batch,
+		int batchCapacity,
 		CancellationToken cancellationToken) {
 
 		// Events
@@ -476,14 +507,17 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 		} finally {
 			batchStopwatch.Stop();
 
+			// Feed the rolling observables for the batching policy
+			this.RecordObservables(totalSuccessCount + totalFailureCount, totalFailureCount);
+
 			// Add to existing batch metrics
 			var standardCount = batch.Count(i => i.EffectivePriority == DistributedMessagePriority.Standard);
 			var timeSensitiveCount = batch.Count(i => i.EffectivePriority == DistributedMessagePriority.TimeSensitive);
-			var systemCount = batch.Count(i => i.EffectivePriority == DistributedMessagePriority.System);
+			var systemCount = batch.Count(i => i.EffectivePriority == DistributedMessagePriority.SystemHealth);
 
 			// Record batch-level metrics
 			this._metricsService.RecordBatchProcessed(
-				batch.Capacity,
+				batchCapacity,
 				batch.Count,
 				batchStopwatch.ElapsedMilliseconds,
 				totalSuccessCount,
@@ -495,7 +529,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 			// Add ending event
 			var completionTags = new ActivityTagsCollection {
 				{ TagNames.BatchDuration, batchStopwatch.ElapsedMilliseconds },
-				{ TagNames.BatchCapacity, batch.Capacity },
+				{ TagNames.BatchCapacity, batchCapacity },
 				{ TagNames.BatchSize, batch.Count },
 				{ TagNames.BatchStandardCount, standardCount },
 				{ TagNames.BatchTimeSensitiveCount, timeSensitiveCount },
@@ -608,7 +642,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 				{ TagNames.ForTarget(batchTarget, TagNames.Metrics.SuccessCount), targetSuccessCount },
 				{ TagNames.ForTarget(batchTarget, TagNames.Metrics.FailureCount), targetFailureCount }
 			};
-			parentActivity?.AddEvent(new ActivityEvent(PublishedBatchCanceled));
+			parentActivity?.AddEvent(new ActivityEvent(PublishedBatchCanceled, tags: canceledTags));
 
 		} catch (Exception ex) {
 			var elapsed = Stopwatch.GetElapsedTime(batchTargetStartTimestamp);
@@ -688,6 +722,41 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 	}
 
 	/// <summary>
+	/// Records batch outcomes into the rolling observation window.
+	/// </summary>
+	/// <param name="attempted">Messages attempted (delivered + failed) by the batch</param>
+	/// <param name="failed">Messages failed by the batch</param>
+	private void RecordObservables(int attempted, int failed) {
+		Interlocked.Add(ref this._windowAttemptCount, attempted);
+		Interlocked.Add(ref this._windowFailureCount, failed);
+	}
+
+	/// <summary>
+	/// Computes the send-rate and error-rate observables over the current window,
+	/// resetting the window once it has elapsed.
+	/// </summary>
+	/// <returns>Messages attempted per second, and failed/attempted ratio, over the
+	/// current observation window.</returns>
+	private (double sendRatePerSecond, double errorRate) SnapshotObservables() {
+
+		var elapsed = Stopwatch.GetElapsedTime(Interlocked.Read(ref this._windowStartTimestamp));
+		var attempts = Interlocked.Read(ref this._windowAttemptCount);
+		var failures = Interlocked.Read(ref this._windowFailureCount);
+
+		var seconds = Math.Max(elapsed.TotalSeconds, 1.0);
+		var sendRate = attempts / seconds;
+		var errorRate = attempts == 0 ? 0.0 : (double)failures / attempts;
+
+		if (elapsed >= ObservationWindow) {
+			Interlocked.Exchange(ref this._windowStartTimestamp, Stopwatch.GetTimestamp());
+			Interlocked.Exchange(ref this._windowAttemptCount, 0);
+			Interlocked.Exchange(ref this._windowFailureCount, 0);
+		}
+
+		return (sendRate, errorRate);
+	}
+
+	/// <summary>
 	/// Background task that periodically records the current queue depth metrics.
 	/// </summary>
 	/// <param name="cancellationToken">Token to monitor for cancellation requests</param>
@@ -703,7 +772,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 				// Normal cancellation, no logging needed
 			} catch (Exception ex) {
 				// We swallow the error, we're simply logging
-				// the queue count as a convenience to the 
+				// the queue count as a convenience to the
 				// sys admin/developer
 				this._logger.QueueDepthError(ex);
 			}

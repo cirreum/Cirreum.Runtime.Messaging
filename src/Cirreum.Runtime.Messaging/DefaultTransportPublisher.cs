@@ -1,7 +1,8 @@
-﻿namespace Cirreum.Runtime.Messaging;
+namespace Cirreum.Runtime.Messaging;
 
 using Cirreum.Messaging;
 using Cirreum.Messaging.Metrics;
+using Cirreum.Messaging.Options;
 using Cirreum.Runtime.Messaging.Batching;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -13,14 +14,19 @@ using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
-/// Default implementation of the distributed transport publisher that processes
-/// and delivers messages through the messaging infrastructure.
+/// The delivery engine for the <see cref="DistributedMessage"/> channel. Implements the
+/// channel's <see cref="IDistributedTransportPublisher{TBase}"/> contract over the
+/// configured <see cref="IMessagingClient"/> and provides the typed entry point used by
+/// the outbound Conductor bridge (<see cref="OutboundDistributedMessageHandler{TMessage}"/>).
 /// </summary>
 /// <remarks>
 /// Supports both direct (synchronous) and background (batched) delivery modes,
-/// with integrated telemetry, distributed tracing, and error handling.
+/// with integrated telemetry, distributed tracing, and error handling. Per-message
+/// delivery preferences (<see cref="DistributedMessage.UseBackgroundDelivery"/> and
+/// <see cref="DistributedMessage.Priority"/>) are honored on the typed path; the
+/// envelope-level <see cref="PublishAsync"/> contract applies the channel defaults.
 /// </remarks>
-internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher, IDisposable {
+internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher<DistributedMessage>, IDisposable {
 
 	/// <summary>
 	/// Activity source for distributed tracing of message publishing operations
@@ -48,9 +54,9 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 	private readonly IMessagingClient _messagingClient;
 
 	/// <summary>
-	/// Registry for message type definitions
+	/// Registry for message type definitions and within-channel routing targets
 	/// </summary>
-	private readonly IMessageRegistry _registry;
+	private readonly IDistributedMessageRegistry _registry;
 
 	/// <summary>
 	/// Identifier for the producer of messages
@@ -87,19 +93,19 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 	/// </summary>
 	/// <param name="serviceProvider">Service provider for resolving dependencies</param>
 	/// <param name="batchProcessor">Processor for batched message delivery</param>
-	/// <param name="registry">Registry for message type definitions</param>
+	/// <param name="registry">Registry for message type definitions and routing targets</param>
 	/// <param name="environment">The current <see cref="IDomainEnvironment"/></param>
 	/// <param name="nodeIdProvider">Provider of the current replica's node identity, stamped on every outgoing message for self-echo prevention.</param>
-	/// <param name="options">Configuration options for message distribution</param>
+	/// <param name="options">Configuration options for the distributed-messaging channel</param>
 	/// <param name="logger">Logger for recording publisher events and errors</param>
 	/// <param name="metricsService">Service for recording messaging metrics</param>
 	public DefaultTransportPublisher(
 		IServiceProvider serviceProvider,
 		IBatchProcessor batchProcessor,
-		IMessageRegistry registry,
+		IDistributedMessageRegistry registry,
 		IDomainEnvironment environment,
 		INodeIdProvider nodeIdProvider,
-		IOptions<DistributionOptions> options,
+		IOptions<DistributedMessagingOptions> options,
 		ILogger<DefaultTransportPublisher> logger,
 		IMessagingMetricsService metricsService) {
 
@@ -111,25 +117,25 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 		this._nodeIdProvider = nodeIdProvider;
 
 		// Resolve the message client
-		var instanceKey = options.Value.Sender.InstanceKey;
+		var instanceKey = options.Value.InstanceKey;
 		if (string.IsNullOrWhiteSpace(instanceKey)) {
 			throw new InvalidOperationException(DistributeMessagingStrings.Error_InstanceKeyRequired);
 		}
 		this._messagingClient = serviceProvider.GetRequiredKeyedService<IMessagingClient>(instanceKey);
 
 		// Cache common state
-		this._topicName = options.Value.Sender.TopicName;
-		this._queueName = options.Value.Sender.QueueName;
+		this._topicName = options.Value.TopicName;
+		this._queueName = options.Value.QueueName;
 		this._producerId =
 			$"{environment.RuntimeType}:{Assembly.GetEntryAssembly()?.GetName()?.Name ?? "Unknown"}";
 		this.useBackgroundDeliveryByDefault
-			= options.Value.Sender.BackgroundDelivery.UseBackgroundDeliveryByDefault;
+			= options.Value.BackgroundDelivery.UseBackgroundDeliveryByDefault;
 		this._publishMessageActivity = new ActivitySource(DistributeMessagingStrings.MessagingNamespace);
 
 	}
 
 	/// <summary>
-	/// Publishes a message to the distributed transport infrastructure.
+	/// Publishes a typed message to the distributed transport infrastructure.
 	/// </summary>
 	/// <typeparam name="T">The type of message to publish</typeparam>
 	/// <param name="message">The message to publish</param>
@@ -155,8 +161,8 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 		activity?.Start();
 
 		var definition = this._registry.GetDefinitionFor<T>();
+		var target = this._registry.GetTargetFor<T>();
 		var subject = $"{definition.Identifier}.v{definition.Version}";
-		var target = definition.Target;
 
 		// Received a message for delivery...
 		this._metricsService.RecordMessageReceived(
@@ -169,19 +175,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 			var envelope = DistributedMessageEnvelope.Create(message, definition, this._producerId);
 
 			// Generate the outbound message
-			var outboundMessage = OutboundMessage
-				.AsJsonContent(envelope)
-				.WithSubject(subject);
-
-			// Stamp cross-broker filterable metadata as application properties.
-			// Each broker maps OutboundMessage.Properties to its native filterable
-			// property bag (Service Bus ApplicationProperties, AWS SNS message
-			// attributes, Kafka headers, NATS headers). Filter expressions live in
-			// infrastructure-as-code per deployment.
-			outboundMessage.Properties[DistributeMessagingStrings.Property_Identifier] = definition.Identifier;
-			outboundMessage.Properties[DistributeMessagingStrings.Property_Version] = definition.Version;
-			outboundMessage.Properties[DistributeMessagingStrings.Property_Producer] = this._producerId;
-			outboundMessage.Properties[DistributeMessagingStrings.Property_Node] = this._nodeIdProvider.NodeId;
+			var outboundMessage = CreateOutboundMessage(envelope, subject);
 
 			// Background (parallel) processing...
 			if (message.UseBackgroundDelivery ?? this.useBackgroundDeliveryByDefault) {
@@ -217,15 +211,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 			}
 
 			// Standard (sequential) processing
-			if (target == MessageTarget.Topic) {
-				await this._messagingClient
-					.UseTopic(this._topicName)
-					.BroadcastMessageAsync(outboundMessage, token);
-			} else if (target == MessageTarget.Queue) {
-				await this._messagingClient
-					.UseQueueSender(this._queueName)
-					.PublishMessageAsync(outboundMessage, token);
-			}
+			await this.SendDirectAsync(outboundMessage, target, token);
 			stopwatch.Stop();
 
 			// Record successful delivery metrics
@@ -249,6 +235,137 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 				ex.GetType().Name,
 				stopwatch.ElapsedMilliseconds);
 			throw;
+		}
+	}
+
+	/// <inheritdoc/>
+	/// <remarks>
+	/// The wire-format envelope carries no per-message delivery preferences, so this
+	/// surface applies the channel defaults: background (batched) delivery at
+	/// <see cref="DistributedMessagePriority.Standard"/> priority when
+	/// <c>BackgroundDelivery.UseBackgroundDeliveryByDefault</c> is set, otherwise a
+	/// direct send.
+	/// </remarks>
+	public async Task PublishAsync(
+		DistributedMessageEnvelope envelope,
+		MessageTarget target,
+		CancellationToken cancellationToken = default) {
+
+		ObjectDisposedException.ThrowIf(this._disposed, this);
+		var stopwatch = Stopwatch.StartNew();
+
+		using var activity = this._publishMessageActivity
+			.CreateActivity(
+				DistributeMessagingStrings.Activity_PublishMessageAsync,
+				ActivityKind.Producer);
+		activity?.Start();
+
+		var subject = $"{envelope.MessageIdentifier}.v{envelope.MessageVersion}";
+
+		// Received a message for delivery...
+		this._metricsService.RecordMessageReceived(
+			subject,
+			target);
+
+		try {
+
+			// Generate the outbound message
+			var outboundMessage = CreateOutboundMessage(envelope, subject);
+
+			// Background (parallel) processing...
+			if (this.useBackgroundDeliveryByDefault) {
+
+				var queuedPriority =
+					await this._batchProcessor.SubmitMessageAsync(
+						outboundMessage,
+						target,
+						DistributedMessagePriority.Standard,
+						cancellationToken);
+				stopwatch.Stop();
+
+				this._metricsService.RecordMessageQueued(
+					subject,
+					target,
+					stopwatch.ElapsedMilliseconds,
+					DistributedMessagePriority.Standard);
+
+				activity?.AddEvent(new(
+					name: DistributeMessagingStrings.Event_MessageQueueForDelivery,
+					tags: [
+						new(DistributeMessagingStrings.Tag_Subject, subject),
+						new(DistributeMessagingStrings.Tag_QueuedPriority, queuedPriority.ToString())
+					])
+				);
+
+				return;
+			}
+
+			// Standard (sequential) processing
+			await this.SendDirectAsync(outboundMessage, target, cancellationToken);
+			stopwatch.Stop();
+
+			this._metricsService.RecordMessageDelivered(
+				subject,
+				target,
+				stopwatch.ElapsedMilliseconds);
+
+			activity?.AddEvent(new(
+				name: DistributeMessagingStrings.Event_MessageSentDirectly,
+				tags: [new(DistributeMessagingStrings.Tag_Subject, subject)]));
+
+		} catch (OperationCanceledException oex) when (oex.CancellationToken == cancellationToken) {
+			// no logging, just return, as we're being shutdown/cancelled
+		} catch (Exception ex) {
+			stopwatch.Stop();
+			this._metricsService.RecordMessageFailed(
+				subject,
+				target,
+				ex.GetType().Name,
+				stopwatch.ElapsedMilliseconds);
+			throw;
+		}
+	}
+
+	/// <summary>
+	/// Creates the broker-agnostic outbound message for an envelope, stamping the
+	/// cross-broker filterable metadata as application properties.
+	/// </summary>
+	/// <remarks>
+	/// Each broker maps <see cref="OutboundMessage.Properties"/> to its native filterable
+	/// property bag (Service Bus ApplicationProperties, AWS SNS message attributes, Kafka
+	/// headers, NATS headers). Filter expressions live in infrastructure-as-code per
+	/// deployment.
+	/// </remarks>
+	private OutboundMessage CreateOutboundMessage(DistributedMessageEnvelope envelope, string subject) {
+
+		var outboundMessage = OutboundMessage
+			.AsJsonContent(envelope)
+			.WithSubject(subject);
+
+		outboundMessage.Properties[DistributeMessagingStrings.Property_Identifier] = envelope.MessageIdentifier;
+		outboundMessage.Properties[DistributeMessagingStrings.Property_Version] = envelope.MessageVersion;
+		outboundMessage.Properties[DistributeMessagingStrings.Property_Producer] = envelope.ProducerId;
+		outboundMessage.Properties[DistributeMessagingStrings.Property_Node] = this._nodeIdProvider.NodeId;
+
+		return outboundMessage;
+	}
+
+	/// <summary>
+	/// Sends a single outbound message directly to the target's configured destination.
+	/// </summary>
+	private async Task SendDirectAsync(
+		OutboundMessage outboundMessage,
+		MessageTarget target,
+		CancellationToken token) {
+
+		if (target == MessageTarget.Topic) {
+			await this._messagingClient
+				.UseTopic(this._topicName)
+				.BroadcastMessageAsync(outboundMessage, token);
+		} else if (target == MessageTarget.Queue) {
+			await this._messagingClient
+				.UseQueueSender(this._queueName)
+				.PublishMessageAsync(outboundMessage, token);
 		}
 	}
 

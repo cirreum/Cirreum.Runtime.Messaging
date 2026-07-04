@@ -2,7 +2,8 @@
 
 using Cirreum.Messaging;
 
-[MessageDefinition($"{nameof(DefaultTransportPublisher)}.QueueAlert", "1.0", MessageTarget.Queue)]
+[MessageVersion($"{nameof(DefaultTransportPublisher)}.QueueAlert", "1.0")]
+[DistributedMessageTarget(MessageTarget.Queue)]
 public record QueueDepthAlertMessage(
 	long CurrentDepth,
 	int CritcalThreshold

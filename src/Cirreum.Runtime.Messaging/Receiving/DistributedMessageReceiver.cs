@@ -3,6 +3,7 @@ namespace Cirreum.Runtime.Messaging.Receiving;
 using Cirreum;
 using Cirreum.Conductor;
 using Cirreum.Messaging;
+using Cirreum.Messaging.Options;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -48,7 +49,6 @@ using System.Threading.Tasks;
 internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 
 	private readonly IServiceProvider _serviceProvider;
-	private readonly IMessageRegistry _registry;
 	private readonly INodeIdProvider _nodeIdProvider;
 	private readonly ILogger<DistributedMessageReceiver> _logger;
 	private readonly ReceiverOptions _options;
@@ -63,13 +63,11 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 
 	public DistributedMessageReceiver(
 		IServiceProvider serviceProvider,
-		IMessageRegistry registry,
 		INodeIdProvider nodeIdProvider,
 		IOptions<ReceiverOptions> options,
 		ILogger<DistributedMessageReceiver> logger) {
 
 		this._serviceProvider = serviceProvider;
-		this._registry = registry;
 		this._nodeIdProvider = nodeIdProvider;
 		this._options = options.Value;
 		this._logger = logger;

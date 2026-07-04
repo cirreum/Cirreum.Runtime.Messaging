@@ -1,6 +1,6 @@
 ﻿namespace Cirreum.Runtime.Messaging.Batching;
 
-internal static class BathProcessorTagNames {
+internal static class BatchProcessorTagNames {
 
 	// Base prefixes
 	private const string BatchBase = "batch";

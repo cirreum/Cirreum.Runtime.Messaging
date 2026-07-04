@@ -19,6 +19,23 @@ change, a consumer upgrade, a coordinated multi-repo rollout).
 
 ## Queued
 
+### Honor `ReceiverOptions.PrefetchCount` and `MaxAutoLockRenewalDuration`
+
+- **SemVer:** Minor
+- **Trigger:** `Cirreum.Messaging` receiver-creation API grows an options parameter
+- **Noted:** 2026-07-04
+
+**Why:** The shipped `ReceiverOptions` (from `Cirreum.Messaging.Distributed`)
+carries `PrefetchCount` and `MaxAutoLockRenewalDuration`, but
+`IMessagingClient.UseQueueReceiver(string)` / `UseSubscription(string, string)`
+take no tuning parameters, so `DistributedMessageReceiver` cannot pass them to
+the broker — the two knobs are currently inert. Fixing this properly means
+extending the `Cirreum.Messaging` client contract (e.g., an optional
+receiver-options parameter or a configure callback) and flowing the values
+through `Cirreum.Messaging.Azure` to `ServiceBusReceiverOptions` /
+`ServiceBusProcessorOptions`. Cross-repo change; not worth a bespoke
+Azure-only workaround here.
+
 ### Document "Choosing a Dispatch Path" guidance
 
 - **SemVer:** Patch
@@ -36,11 +53,11 @@ hand-rolled consumer loops).
 
 The clean guidance is three patterns, all valid:
 
-1. **Full framework path** — `MessageDefinitionAttribute` + `DistributedMessage` + `IConductor.PublishAsync()`. Routes through the framework's single configured queue/topic; inbound dispatches via Conductor. Right for framework cross-head state convergence, registry sync, kill switches, and "one event, many handlers may react" semantics.
-2. **App-routed, framework-formatted** — `MessageDefinitionAttribute` + `DistributedMessage` for the wire contract, but bypass Conductor and publish via `IMessagingClient.UseQueueSender(...).PublishMessageAsync(...)` directly with a manually-built `DistributedMessageEnvelope` (constructed via `DistributedMessageEnvelope.Create(...)`). Apps keep Cirreum's envelope conventions (stable identifier + version, producer ID, publish-time, type resolution) and the broker-filterable application properties, but choose their own queues, run their own consumer loops, and tune per-workflow. The sweet spot for serious business workflows.
+1. **Full framework path** — `[MessageVersion]` (+ optional `[DistributedMessageTarget]`) + `DistributedMessage` + `IConductor.PublishAsync()`. Routes through the framework's single configured queue/topic; inbound dispatches via Conductor. Right for framework cross-head state convergence, registry sync, kill switches, and "one event, many handlers may react" semantics.
+2. **App-routed, framework-formatted** — `[MessageVersion]` + `DistributedMessage` for the wire contract, but bypass Conductor and publish via `IMessagingClient.UseQueueSender(...).PublishMessageAsync(...)` directly with a manually-built `DistributedMessageEnvelope` (constructed via `DistributedMessageEnvelope.Create(...)`). Apps keep Cirreum's envelope conventions (stable identifier + version, producer ID, publish-time, type resolution) and the broker-filterable application properties, but choose their own queues, run their own consumer loops, and tune per-workflow. The sweet spot for serious business workflows.
 3. **Fully bespoke** — Raw `IMessagingClient` end-to-end with ad-hoc message classes. App owns everything. Right for legacy integration, external-broker-convention compatibility, or extreme performance-tuning cases.
 
-The mental model worth conveying: `MessageDefinitionAttribute` +
+The mental model worth conveying: `[MessageVersion]` +
 `DistributedMessage` define a *wire contract*. `IConductor.PublishAsync()`
 is one *transport*, not the only one. Apps that internalize the separation
 can reuse the framework's envelope vocabulary for audit/observability

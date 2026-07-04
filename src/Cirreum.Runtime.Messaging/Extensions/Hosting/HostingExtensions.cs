@@ -1,6 +1,8 @@
-﻿namespace Microsoft.AspNetCore.Hosting;
+namespace Microsoft.AspNetCore.Hosting;
 
+using Cirreum.Conductor;
 using Cirreum.Messaging;
+using Cirreum.Messaging.Batching;
 using Cirreum.Messaging.Configuration;
 using Cirreum.Messaging.Health;
 using Cirreum.Messaging.Metrics;
@@ -13,7 +15,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Options;
 
 public static class HostingExtensions {
 
@@ -25,7 +26,7 @@ public static class HostingExtensions {
 	/// </summary>
 	public static IHostApplicationBuilder AddMessaging(this IHostApplicationBuilder builder) {
 
-		// Check if already registered using a marker service		
+		// Check if already registered using a marker service
 		if (builder.Services.IsMarkerTypeRegistered<ConfigureMessagingMarker>()) {
 			return builder;
 		}
@@ -56,7 +57,7 @@ public static class HostingExtensions {
 			);
 
 		// Register the Distributed Messaging Metrics Service
-		var metricsSection = builder.Configuration.GetSection($"{DistributeMessagingStrings.ConfigurationKey}:{DistributionOptions.ConfigurationName}:{MetricsOptions.ConfigurationName}");
+		var metricsSection = builder.Configuration.GetSection($"{DistributeMessagingStrings.ConfigurationKey}:{DistributedMessagingOptions.ConfigurationName}:{MetricsOptions.ConfigurationName}");
 		builder.Services.Configure<MetricsOptions>(metricsSection);
 		builder.Services.AddSingleton<IMessagingMetricsService, DefaultMessagingMetricsService>();
 
@@ -67,18 +68,28 @@ public static class HostingExtensions {
 		// INodeIdProvider before calling AddMessaging().
 		builder.Services.TryAddSingleton<INodeIdProvider, DefaultNodeIdProvider>();
 
+		// Register the DistributedMessage channel's registry and the startup bootstrap
+		// that runs its assembly scan during host initialization.
+		builder.Services.TryAddSingleton<DistributedMessageRegistry>();
+		builder.Services.TryAddSingleton<IDistributedMessageRegistry>(sp =>
+			sp.GetRequiredService<DistributedMessageRegistry>());
+		builder.Services.TryAddSingleton<IDistributedMessageRegistryBootstrap, DistributedMessageRegistryBootstrap>();
+
 		// Register the Distributed Transport Publisher
-		var section = builder.Configuration.GetSection($"{DistributeMessagingStrings.ConfigurationKey}:{DistributionOptions.ConfigurationName}");
+		var section = builder.Configuration.GetSection($"{DistributeMessagingStrings.ConfigurationKey}:{DistributedMessagingOptions.ConfigurationName}");
 		if (section.Exists()) {
-			var instanceName = section.GetValue<string>($"{DistributionOptions.SenderInstanceConfigurationName}");
+			var instanceName = section.GetValue<string>(nameof(DistributedMessagingOptions.InstanceKey));
 			if (!string.IsNullOrEmpty(instanceName)) {
 
 				// Add Configuration Options
 				builder.Services
-					.AddOptions<DistributionOptions>()
-						.Bind(section)
-						.ValidateDataAnnotations()
-					.Services.AddSingleton<IValidateOptions<DistributionOptions>, TimeBatchingValidation>();
+					.AddOptions<DistributedMessagingOptions>()
+						.Bind(section);
+
+				// Register the batching policy. TryAdd so apps with dynamic batching
+				// needs register their own IBatchingPolicy before calling AddMessaging();
+				// the default returns the channel's configured base values unchanged.
+				builder.Services.TryAddSingleton<IBatchingPolicy, DefaultBatchingPolicy>();
 
 				// Register the batch processor
 				builder.Services.AddSingleton<DefaultBatchProcessor>();
@@ -87,13 +98,18 @@ public static class HostingExtensions {
 				builder.Services.AddSingleton<IHostedService>(sp =>
 					sp.GetRequiredService<DefaultBatchProcessor>());
 
-				// Register the distributed publisher
+				// Register the delivery engine as the DistributedMessage channel's
+				// transport publisher (Replace so it wins over any no-op default), and
+				// the outbound Conductor bridge that routes published DistributedMessage
+				// notifications through it.
+				builder.Services.AddSingleton<DefaultTransportPublisher>();
 				builder.Services.Replace(
-					ServiceDescriptor.Describe(
-						typeof(IDistributedTransportPublisher),
-						typeof(DefaultTransportPublisher),
-						ServiceLifetime.Singleton)
-					);
+					ServiceDescriptor.Singleton<IDistributedTransportPublisher<DistributedMessage>>(sp =>
+						sp.GetRequiredService<DefaultTransportPublisher>()));
+				builder.Services.TryAddEnumerable(
+					ServiceDescriptor.Transient(
+						typeof(INotificationHandler<>),
+						typeof(OutboundDistributedMessageHandler<>)));
 			}
 
 			// Register the Distributed Message Receiver — conditional on the
@@ -102,10 +118,10 @@ public static class HostingExtensions {
 			var receiverSection = section.GetSection(ReceiverOptions.ConfigurationName);
 			if (receiverSection.Exists()) {
 
-				var receiverInstance = receiverSection.GetValue<string>(ReceiverOptions.ReceiverInstanceConfigurationName);
-				var queueName = receiverSection.GetValue<string>(ReceiverOptions.QueueConfigurationName);
-				var topicName = receiverSection.GetValue<string>(ReceiverOptions.TopicConfigurationName);
-				var subscriptionName = receiverSection.GetValue<string>(ReceiverOptions.SubscriptionConfigurationName);
+				var receiverInstance = receiverSection.GetValue<string>(nameof(ReceiverOptions.InstanceKey));
+				var queueName = receiverSection.GetValue<string>(nameof(ReceiverOptions.QueueName));
+				var topicName = receiverSection.GetValue<string>(nameof(ReceiverOptions.TopicName));
+				var subscriptionName = receiverSection.GetValue<string>(nameof(ReceiverOptions.SubscriptionName));
 
 				var hasQueue = !string.IsNullOrEmpty(queueName);
 				var hasTopicPair = !string.IsNullOrEmpty(topicName) && !string.IsNullOrEmpty(subscriptionName);

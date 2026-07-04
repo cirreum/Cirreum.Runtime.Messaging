@@ -154,7 +154,7 @@ internal class MessagePrioritizer : IDisposable {
 
 		// Cap at the highest priority level
 		return (DistributedMessagePriority)Math.Min(
-			(int)DistributedMessagePriority.System,
+			(int)DistributedMessagePriority.SystemHealth,
 			(int)item.QueuedPriority + priorityIncrease);
 
 	}
