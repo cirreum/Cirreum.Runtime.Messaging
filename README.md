@@ -128,11 +128,10 @@ public sealed class OrderService(IPublisher publisher) {
 
 ### Custom Batching Policy
 
-The default `IBatchingPolicy` passes the configured base values through unchanged. Apps that want dynamic batching (traffic-aware, queue-depth-aware, time-of-day) register their own policy before `AddMessaging()`:
+The default `IBatchingPolicy` passes the configured base values through unchanged. Apps that want dynamic batching (traffic-aware, queue-depth-aware, time-of-day) plug in their own policy via the composition callback:
 
 ```csharp
-builder.Services.AddSingleton<IBatchingPolicy, TrafficAwareBatchingPolicy>();
-builder.AddMessaging();
+builder.AddMessaging(m => m.UseBatchingPolicy<TrafficAwareBatchingPolicy>());
 ```
 
 Each batch, the processor calls `Evaluate(BatchingContext)` with the configured base values plus live observables (current queue depth, rolling send rate, rolling error rate) and applies the returned fill wait time and capacity.

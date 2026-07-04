@@ -75,8 +75,10 @@ Hierarchical configuration under `Cirreum:Messaging:Distributed` (binds `Distrib
 One entry point in src/Cirreum.Runtime.Messaging/Extensions/Hosting/:
 ```csharp
 builder.AddMessaging()
+// or, with fluent composition:
+builder.AddMessaging(m => m.UseBatchingPolicy<MyPolicy>())
 ```
-registers the Azure Service Bus provider (via `RegisterServiceProvider<AzureServiceBusRegistrar, ...>`), the metrics service, the node-id provider, the registry, and — when the `Distributed` section carries an `InstanceKey` — the batching policy default, batch processor, delivery engine, and outbound bridge; the receiver registers when its config section is complete. The registry's startup scan runs via the `ISystemInitializer` discovery in `Cirreum.Startup`.
+registers the Azure Service Bus provider (via `RegisterServiceProvider<AzureServiceBusRegistrar, ...>`), the metrics service, the node-id provider, the registry, and — when the `Distributed` section carries an `InstanceKey` — the batching policy default, batch processor, delivery engine, and outbound bridge; the receiver registers when its config section is complete. The registry's startup scan runs via the `ISystemInitializer` discovery in `Cirreum.Startup`. The optional `Action<IMessagingBuilder>` callback runs before the idempotence marker check and uses `Replace` semantics, so it applies on every call regardless of order.
 
 ### Key Design Patterns
 1. **Options Pattern** — strongly-typed options from the shared model package

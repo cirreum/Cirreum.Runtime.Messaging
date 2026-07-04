@@ -24,7 +24,18 @@ public static class HostingExtensions {
 	/// Add support for messaging (Service Bus) by registering any configured providers
 	/// and associated instances.
 	/// </summary>
-	public static IHostApplicationBuilder AddMessaging(this IHostApplicationBuilder builder) {
+	/// <param name="builder">The host application builder.</param>
+	/// <param name="configure">Optional fluent composition callback — e.g.,
+	/// <c>AddMessaging(m => m.UseBatchingPolicy&lt;MyPolicy&gt;())</c>. Applied on every
+	/// call, even when the messaging stack itself is already registered.</param>
+	public static IHostApplicationBuilder AddMessaging(
+		this IHostApplicationBuilder builder,
+		Action<IMessagingBuilder>? configure = null) {
+
+		// Apply the fluent composition first (Replace-based, so it wins over the
+		// framework defaults regardless of call order) and before the marker
+		// early-return so a configure-only call still lands.
+		configure?.Invoke(new MessagingBuilder(builder.Services));
 
 		// Check if already registered using a marker service
 		if (builder.Services.IsMarkerTypeRegistered<ConfigureMessagingMarker>()) {

@@ -36,6 +36,24 @@ through `Cirreum.Messaging.Azure` to `ServiceBusReceiverOptions` /
 `ServiceBusProcessorOptions`. Cross-repo change; not worth a bespoke
 Azure-only workaround here.
 
+### Framework-supplied `TimeOfDayBatchingPolicy` + `UseTimeOfDayBatching(...)`
+
+- **SemVer:** Minor
+- **Trigger:** First app that wants time-of-day scaling back (the 1.x profile feature had no known consumers)
+- **Noted:** 2026-07-04
+
+**Why:** The `IBatchingPolicy` documentation in `Cirreum.Messaging.Distributed`
+describes three usage levels; level 2 is a framework-supplied
+`TimeOfDayBatchingPolicy` configured via a `UseTimeOfDayBatching(...)` fluent
+builder. Level 1 (pass-through default) and level 3 (custom policy via
+`AddMessaging(m => m.UseBatchingPolicy<T>())`) exist; level 2 does not. If
+demand returns for the deleted 1.x time-profile behavior, implement it as a
+proper policy: the policy class likely belongs in `Cirreum.Messaging.Distributed`
+(no extra deps), with the `UseTimeOfDayBatching` verb added to
+`IMessagingBuilder` here. Port the day-of-week / hour-window / scaling-factor
+shape from the deleted `BatchScheduler`/`TimeBatchingProfile` (git history,
+pre-2.0).
+
 ### Document "Choosing a Dispatch Path" guidance
 
 - **SemVer:** Patch
