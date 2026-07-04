@@ -67,6 +67,22 @@ var app = builder.Build();
 await app.RunAsync();
 ```
 
+### Direct `IMessagingClient` Usage
+
+`AddMessaging()` registers every instance under `Cirreum:Messaging:Providers` as a **keyed** `IMessagingClient` — usable directly for app-owned queues and topics, with or without the distributed-messaging layer:
+
+```csharp
+public sealed class InvoiceQueueService(
+	[FromKeyedServices("default")] IMessagingClient client) {
+
+	public Task EnqueueAsync(Invoice invoice, CancellationToken ct) =>
+		client.UseQueueSender("invoices.pending.v1")
+			.PublishMessageAsync(OutboundMessage.AsJsonContent(invoice), ct);
+}
+```
+
+The client surface (queue senders/receivers, topics, subscriptions, peek/defer/dead-letter) is defined by [`Cirreum.Messaging`](https://github.com/cirreum/Cirreum.Messaging) and implemented per broker by the provider package (e.g., [`Cirreum.Messaging.Azure`](https://github.com/cirreum/Cirreum.Messaging.Azure)) — see those packages for the full client reference. The [Choosing a Dispatch Path](#choosing-a-dispatch-path) section below covers when to use the client directly versus the distributed channel.
+
 ### Defining and Publishing Messages
 
 Messages derive from `DistributedMessage`, declare their wire contract with `[MessageVersion]`, and optionally pick a routing target (topic is the default):
