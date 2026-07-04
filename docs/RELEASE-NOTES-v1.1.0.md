@@ -211,4 +211,4 @@ The receiver does the mechanical work — receive, deserialize, wrap, publish, a
 
 - `CHANGELOG.md` — condensed change list for `1.1.0`.
 - `Cirreum.Core 5.2.0` release notes — full architectural framing of the abstractions this release consumes.
-- `CONFIGURATION_GUIDE.md` — full sender + receiver configuration reference.
+- `CONFIGURATION.md` (docs/) — full configuration reference (renamed/relocated post-1.1.0; the 2.0 guide reflects the reset configuration shape).

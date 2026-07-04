@@ -33,7 +33,7 @@
 ### ⚙️ Production-Ready
 - **Thread-safe operations**: Designed for high-concurrency scenarios
 - **Graceful shutdown**: Proper cleanup of background services
-- **Health checks**: Integration with ASP.NET Core health monitoring
+- **Health checks**: Transport-instance health monitoring (queue/topic validation, readiness participation) via the provider configuration
 - **Structured logging**: Rich context for troubleshooting
 
 ### 📥 Inbound Message Dispatch *(added 1.1.0)*
@@ -121,7 +121,7 @@ public sealed class OrderService(IPublisher publisher) {
 }
 ```
 
-`InstanceKey` names the keyed `IMessagingClient` registration from the transport provider's `Cirreum:Messaging:Providers` configuration.
+`InstanceKey` names the keyed `IMessagingClient` registration from the transport provider's `Cirreum:Messaging:Providers` configuration. See the [Configuration Guide](docs/CONFIGURATION.md) for every setting, defaults, and provider-instance configuration.
 
 ### Custom Batching Policy
 
@@ -203,7 +203,13 @@ The envelope properties available to every handler:
 | `ProducerId` | Head/app identity that published — useful for audit |
 | `PublishedAt` | UTC timestamp captured at envelope creation — useful for latency metrics or replay detection (nullable for envelopes from older senders) |
 
-See [`docs/RELEASE-NOTES-v1.1.0.md`](docs/RELEASE-NOTES-v1.1.0.md) for the routing convention, multi-head topology, and operational notes.
+See the [Configuration Guide](docs/CONFIGURATION.md) for the receiver's full settings and queue-vs-subscription semantics.
+
+## Documentation
+
+- [Configuration Guide](docs/CONFIGURATION.md) — every channel, background-delivery, receiver, metrics, and provider setting with defaults
+- [Migration Guide (v1 → v2)](docs/MIGRATION-v2.md) — breaking changes and the find/replace table for the 2.0 foundation-reset release
+- [Changelog](docs/CHANGELOG.md)
 
 ## Contribution Guidelines
 
