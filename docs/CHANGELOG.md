@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-07-04
+
 ### Breaking
 
 - **Rebuilt on the reset foundation** — the legacy `Cirreum.Core 5.x` monolith reference is replaced by `Cirreum.Domain` + `Cirreum.Messaging` + `Cirreum.Messaging.Distributed`. The distributed-messaging model (message base, envelope, registry, options, batching policy, metrics contract) now comes from `Cirreum.Messaging.Distributed`; this package is the runtime delivery engine over those abstractions.
