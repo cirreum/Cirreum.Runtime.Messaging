@@ -20,4 +20,15 @@ internal sealed class MessagingBuilder(IServiceCollection services) : IMessaging
 		return this;
 	}
 
+	/// <inheritdoc/>
+	public IMessagingBuilder UseTimeOfDayBatching(Action<TimeOfDayBatchingOptions> configure) {
+		ArgumentNullException.ThrowIfNull(configure);
+		var options = new TimeOfDayBatchingOptions();
+		configure(options);
+		// The policy constructor validates the schedule, failing composition fast on a
+		// bad configuration rather than at first-batch time.
+		this.Services.Replace(ServiceDescriptor.Singleton<IBatchingPolicy>(new TimeOfDayBatchingPolicy(options)));
+		return this;
+	}
+
 }

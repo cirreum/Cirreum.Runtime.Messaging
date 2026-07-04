@@ -128,7 +128,22 @@ public sealed class OrderService(IPublisher publisher) {
 
 ### Custom Batching Policy
 
-The default `IBatchingPolicy` passes the configured base values through unchanged. Apps that want dynamic batching (traffic-aware, queue-depth-aware, time-of-day) plug in their own policy via the composition callback:
+The default `IBatchingPolicy` passes the configured base values through unchanged. Apps that want dynamic batching plug in a policy via the composition callback — either the framework-supplied day-of-week / time-of-day scaler:
+
+```csharp
+builder.AddMessaging(m => m.UseTimeOfDayBatching(schedule => {
+	schedule.TimeZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+	schedule.Rules.Add(new() {
+		Days = [DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday],
+		StartHour = 16,
+		EndHour = 23,
+		ScalingFactor = 0.5, // high volume expected — halve the fill wait, send sooner
+		Description = "Weekend evening spike"
+	});
+}));
+```
+
+or a fully custom policy (traffic-aware, queue-depth-aware, business-signal-aware):
 
 ```csharp
 builder.AddMessaging(m => m.UseBatchingPolicy<TrafficAwareBatchingPolicy>());

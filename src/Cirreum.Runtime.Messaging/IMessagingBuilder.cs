@@ -25,4 +25,15 @@ public interface IMessagingBuilder {
 	/// singleton.</typeparam>
 	IMessagingBuilder UseBatchingPolicy<TPolicy>() where TPolicy : class, IBatchingPolicy;
 
+	/// <summary>
+	/// Uses the framework-supplied <see cref="TimeOfDayBatchingPolicy"/> as the channel's
+	/// <see cref="IBatchingPolicy"/> — simple day-of-week / time-of-day scaling of the
+	/// base batch-fill wait time, without writing a custom policy.
+	/// </summary>
+	/// <param name="configure">Configures the schedule: the time zone, the default
+	/// scaling factor, and the day/hour-window rules.</param>
+	/// <exception cref="ArgumentException">The configured schedule is invalid (a
+	/// non-positive scaling factor, a rule without days, or out-of-range hours).</exception>
+	IMessagingBuilder UseTimeOfDayBatching(Action<TimeOfDayBatchingOptions> configure);
+
 }
