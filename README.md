@@ -10,7 +10,10 @@
 
 ## Overview
 
-**Cirreum.Runtime.Messaging** is the runtime delivery engine for Cirreum's distributed-messaging channel. The messaging *model* — `DistributedMessage`, the wire envelope, the registry, and the `IBatchingPolicy` strategy — ships in `Cirreum.Messaging.Distributed`; this package provides the moving parts: the outbound Conductor bridge, the batching processor, the transport publisher, the inbound receiver, and OpenTelemetry metrics. It offers both synchronous and asynchronous message delivery patterns with built-in resilience and monitoring capabilities.
+**Cirreum.Runtime.Messaging** composes the messaging stack for Cirreum server hosts and implements the Cirreum Distributed Messaging feature. A single `AddMessaging()` call does both:
+
+- **Messaging services composition** — registers the configured messaging providers (Azure Service Bus) from `Cirreum:Messaging:Providers`, exposing each instance as a keyed `IMessagingClient` (queues, topics, subscriptions) with health checks and tracing. Apps can consume these clients directly for their own messaging workflows, with or without the distributed-messaging layer.
+- **Distributed Messaging** — the runtime delivery engine for the `DistributedMessage` channel. The messaging *model* — `DistributedMessage`, the wire envelope, the registry, and the `IBatchingPolicy` strategy — ships in `Cirreum.Messaging.Distributed`; this package provides the moving parts: the outbound Conductor bridge, the policy-driven batching processor, the transport publisher, the inbound receiver, and OpenTelemetry metrics, offering both synchronous and batched delivery with built-in resilience.
 
 ## Key Features
 

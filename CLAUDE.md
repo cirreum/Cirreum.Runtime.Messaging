@@ -31,11 +31,14 @@ dotnet watch build
 ## High-Level Architecture
 
 ### Core Purpose
-Cirreum.Runtime.Messaging is the runtime **delivery engine** for Cirreum's distributed-messaging channel. The messaging *model* lives in `Cirreum.Messaging.Distributed` (L2 Common): `DistributedMessage`, `DistributedMessageEnvelope`, `IDistributedMessageRegistry`, `DistributedMessagingOptions`/`BackgroundDeliveryOptions`/`ReceiverOptions`, `IBatchingPolicy`, and the `IMessagingMetricsService` contract. This package provides:
-- The outbound Conductor bridge and transport publisher (direct + batched delivery)
-- The policy-driven batching system with prioritization and circuit breaking
-- The inbound hosted receiver (queue and/or topic-subscription consumer loops)
-- OpenTelemetry metrics/tracing implementation
+Cirreum.Runtime.Messaging has two roles, both wired by the single `AddMessaging()` entry point:
+
+1. **Messaging services composition** — registers the configured messaging providers (Azure Service Bus, via `RegisterServiceProvider<AzureServiceBusRegistrar, ...>` over `Cirreum:Messaging:Providers`), exposing each instance as a keyed `IMessagingClient` with health checks and tracing. This runs unconditionally — apps may consume the clients directly without the distributed-messaging layer.
+2. **The Distributed Messaging delivery engine** — the runtime implementation of Cirreum's distributed-messaging channel. The messaging *model* lives in `Cirreum.Messaging.Distributed` (L2 Common): `DistributedMessage`, `DistributedMessageEnvelope`, `IDistributedMessageRegistry`, `DistributedMessagingOptions`/`BackgroundDeliveryOptions`/`ReceiverOptions`, `IBatchingPolicy`, and the `IMessagingMetricsService` contract. This package provides:
+   - The outbound Conductor bridge and transport publisher (direct + batched delivery)
+   - The policy-driven batching system with prioritization and circuit breaking
+   - The inbound hosted receiver (queue and/or topic-subscription consumer loops)
+   - OpenTelemetry metrics/tracing implementation
 
 ### Key Architectural Components
 

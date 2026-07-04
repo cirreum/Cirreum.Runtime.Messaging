@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
 	<PropertyGroup>
-		<Description>The Runtime Messaging service configuration.</Description>
+		<Description>Messaging services composition and the Distributed Messaging delivery engine for Cirreum server hosts: registers configured messaging providers (Azure Service Bus) as keyed IMessagingClient instances, and delivers DistributedMessage traffic with policy-driven batching, an inbound receiver, and OpenTelemetry observability.</Description>
 		<PackageTags>cirreum;runtime;server;serviceprovider;messaging</PackageTags>
 	</PropertyGroup>
 
