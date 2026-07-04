@@ -175,7 +175,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 			var envelope = DistributedMessageEnvelope.Create(message, definition, this._producerId);
 
 			// Generate the outbound message
-			var outboundMessage = CreateOutboundMessage(envelope, subject);
+			var outboundMessage = this.CreateOutboundMessage(envelope, subject);
 
 			// Background (parallel) processing...
 			if (message.UseBackgroundDelivery ?? this.useBackgroundDeliveryByDefault) {
@@ -270,7 +270,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 		try {
 
 			// Generate the outbound message
-			var outboundMessage = CreateOutboundMessage(envelope, subject);
+			var outboundMessage = this.CreateOutboundMessage(envelope, subject);
 
 			// Background (parallel) processing...
 			if (this.useBackgroundDeliveryByDefault) {

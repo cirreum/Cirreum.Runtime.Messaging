@@ -68,12 +68,12 @@ public static class HostingExtensions {
 		// INodeIdProvider before calling AddMessaging().
 		builder.Services.TryAddSingleton<INodeIdProvider, DefaultNodeIdProvider>();
 
-		// Register the DistributedMessage channel's registry and the startup bootstrap
-		// that runs its assembly scan during host initialization.
+		// Register the DistributedMessage channel's registry. Its assembly scan runs at
+		// host startup via DistributedMessageRegistryBootstrap, an ISystemInitializer the
+		// Cirreum.Startup scan discovers from this assembly.
 		builder.Services.TryAddSingleton<DistributedMessageRegistry>();
 		builder.Services.TryAddSingleton<IDistributedMessageRegistry>(sp =>
 			sp.GetRequiredService<DistributedMessageRegistry>());
-		builder.Services.TryAddSingleton<IDistributedMessageRegistryBootstrap, DistributedMessageRegistryBootstrap>();
 
 		// Register the Distributed Transport Publisher
 		var section = builder.Configuration.GetSection($"{DistributeMessagingStrings.ConfigurationKey}:{DistributedMessagingOptions.ConfigurationName}");

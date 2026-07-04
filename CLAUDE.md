@@ -42,7 +42,7 @@ Cirreum.Runtime.Messaging is the runtime **delivery engine** for Cirreum's distr
 #### 1. Outbound Path
 - **OutboundDistributedMessageHandler&lt;TMessage&gt;** (src/Cirreum.Runtime.Messaging/OutboundDistributedMessageHandler.cs) — open-generic `INotificationHandler<>` bridge; intercepts any published `DistributedMessage` and forwards it to the engine. Registered explicitly by the hosting extension (internal type, so Conductor's public-type assembly scan can't double-register it).
 - **DefaultTransportPublisher** (src/Cirreum.Runtime.Messaging/DefaultTransportPublisher.cs) — the delivery engine. Implements the channel contract `IDistributedTransportPublisher<DistributedMessage>` (envelope-level, channel-default semantics) and exposes the typed `PublishMessageAsync<T>` path (per-message `UseBackgroundDelivery`/`Priority` honored). Registered with `Replace` so it wins over the framework's `EmptyTransportPublisher<>` no-op.
-- Message definitions and queue/topic routing come from the shipped `DistributedMessageRegistry`, initialized at startup via `DistributedMessageRegistryBootstrap` (a `Cirreum.Startup` `IAutoInitialize` service).
+- Message definitions and queue/topic routing come from the shipped `DistributedMessageRegistry`, initialized at startup via `DistributedMessageRegistryBootstrap` (a `Cirreum.Startup` `ISystemInitializer`, discovered by the startup assembly scan — no hosting registration needed).
 
 #### 2. Background Batching System
 The batching system (src/Cirreum.Runtime.Messaging/Batching/) provides batched message delivery:
@@ -73,7 +73,7 @@ One entry point in src/Cirreum.Runtime.Messaging/Extensions/Hosting/:
 ```csharp
 builder.AddMessaging()
 ```
-registers the Azure Service Bus provider (via `RegisterServiceProvider<AzureServiceBusRegistrar, ...>`), the metrics service, the node-id provider, the registry + bootstrap, and — when the `Distributed` section carries an `InstanceKey` — the batching policy default, batch processor, delivery engine, and outbound bridge; the receiver registers when its config section is complete.
+registers the Azure Service Bus provider (via `RegisterServiceProvider<AzureServiceBusRegistrar, ...>`), the metrics service, the node-id provider, the registry, and — when the `Distributed` section carries an `InstanceKey` — the batching policy default, batch processor, delivery engine, and outbound bridge; the receiver registers when its config section is complete. The registry's startup scan runs via the `ISystemInitializer` discovery in `Cirreum.Startup`.
 
 ### Key Design Patterns
 1. **Options Pattern** — strongly-typed options from the shared model package
