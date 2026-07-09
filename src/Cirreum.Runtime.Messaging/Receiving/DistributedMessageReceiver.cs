@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -35,8 +36,8 @@ using System.Threading.Tasks;
 /// <list type="number">
 ///   <item><description>Self-echo skip: if the message's <c>cirreum.node</c> application property matches this replica's <see cref="INodeIdProvider.NodeId"/>, the message is acked without further work.</description></item>
 ///   <item><description>Envelope deserialization: parses the JSON body into <see cref="DistributedMessageEnvelope"/>. Failure → dead-letter.</description></item>
-///   <item><description>Type resolution: <see cref="Type.GetType(string)"/> against <see cref="DistributedMessageEnvelope.MessageType"/>. Failure → ack with warning (no redelivery loop for genuinely unknown types).</description></item>
-///   <item><description>Payload deserialization: typed <see cref="DistributedMessage"/> instance. Failure → dead-letter.</description></item>
+///   <item><description>Type resolution by wire identity through the registry (<c>ResolveType(MessageIdentifier, MessageVersion)</c>). An unresolved identity is disposed per source: a <b>queue</b> dead-letters (addressed to us — an unknown identity is a misconfiguration worth triage); a <b>topic subscription</b> completes and logs (fan-out delivers family members this consumer need not carry — normal, never a redelivery loop).</description></item>
+///   <item><description>Payload deserialization: typed <see cref="DistributedMessage"/> instance via <see cref="DistributedMessageEnvelope.DeserializeMessage(Type)"/>. Failure → dead-letter.</description></item>
 ///   <item><description>Wrap + publish: build <see cref="DistributedMessageReceived{TMessage}"/> via cached reflection, publish through <see cref="IPublisher"/> within a fresh DI scope.</description></item>
 ///   <item><description>Acknowledgment: complete on success; abandon on handler failure (broker will redeliver up to its max delivery count, then dead-letter).</description></item>
 /// </list>
@@ -50,6 +51,7 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 
 	private readonly IServiceProvider _serviceProvider;
 	private readonly INodeIdProvider _nodeIdProvider;
+	private readonly IDistributedMessageRegistry _registry;
 	private readonly ILogger<DistributedMessageReceiver> _logger;
 	private readonly ReceiverOptions _options;
 	private readonly IMessagingClient _messagingClient;
@@ -64,11 +66,13 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 	public DistributedMessageReceiver(
 		IServiceProvider serviceProvider,
 		INodeIdProvider nodeIdProvider,
+		IDistributedMessageRegistry registry,
 		IOptions<ReceiverOptions> options,
 		ILogger<DistributedMessageReceiver> logger) {
 
 		this._serviceProvider = serviceProvider;
 		this._nodeIdProvider = nodeIdProvider;
+		this._registry = registry;
 		this._options = options.Value;
 		this._logger = logger;
 
@@ -152,7 +156,7 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 			await Parallel.ForEachAsync(
 				receiver.ReceiveMessagesStreamAsync(ct),
 				parallelOptions,
-				async (received, innerCt) => await this.ProcessAsync(received, $"queue:{queueName}", innerCt));
+				async (received, innerCt) => await this.ProcessAsync(received, $"queue:{queueName}", isQueueSource: true, innerCt));
 
 		} catch (OperationCanceledException) {
 			// expected on shutdown
@@ -172,7 +176,7 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 			await Parallel.ForEachAsync(
 				receiver.ReceiveMessagesStreamAsync(ct),
 				parallelOptions,
-				async (received, innerCt) => await this.ProcessAsync(received, $"subscription:{topic}/{subscription}", innerCt));
+				async (received, innerCt) => await this.ProcessAsync(received, $"subscription:{topic}/{subscription}", isQueueSource: false, innerCt));
 
 		} catch (OperationCanceledException) {
 			// expected on shutdown
@@ -181,7 +185,7 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 		}
 	}
 
-	private async Task ProcessAsync(IMessagingReceivedMessage received, string source, CancellationToken ct) {
+	private async Task ProcessAsync(IMessagingReceivedMessage received, string source, bool isQueueSource, CancellationToken ct) {
 
 		// 1. Self-echo skip without paying deserialization cost
 		if (received.Properties.TryGetValue(DistributeMessagingStrings.Property_Node, out var nodeObj)
@@ -206,11 +210,30 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 			return;
 		}
 
-		// 3. .NET type resolution — ResolveMessageType handles the assembly-hinted
-		// format, legacy bare full names, and malformed wire input (null, no throw).
-		var messageType = envelope.ResolveMessageType();
+		// 3. Type resolution by wire identity through the registry, which only ever
+		// selects from this process's own vetted scan set. A null is a normal foreign
+		// identity — the envelope's diagnostic MessageType is never a resolution input.
+		var messageType = this._registry.ResolveType(envelope.MessageIdentifier, envelope.MessageVersion);
 
 		if (messageType is null) {
+
+			// Per-source disposition. A queue is addressed to us, so an unknown identity
+			// is a misconfiguration (a missing assembly / a producer ahead of us) worth
+			// operator triage — dead-letter it. A topic subscription fans every family
+			// member out to every subscriber, so members this consumer doesn't carry are
+			// normal weather — complete and move on, never a redelivery loop.
+			if (isQueueSource) {
+				this._logger.UnknownMessageTypeDeadLettered(
+					envelope.MessageType,
+					envelope.MessageIdentifier,
+					envelope.MessageVersion);
+				await received.DeadLetterMessageAsync(
+					DistributeMessagingStrings.Event_UnknownMessageType,
+					$"No type registered for identity {envelope.MessageIdentifier} v{envelope.MessageVersion}.",
+					ct);
+				return;
+			}
+
 			this._logger.UnknownMessageType(
 				envelope.MessageType,
 				envelope.MessageIdentifier,
@@ -219,10 +242,10 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 			return;
 		}
 
-		// 4. Payload deserialization
+		// 4. Payload deserialization to the registry-resolved concrete type.
 		object typedMessage;
 		try {
-			typedMessage = envelope.DeserializeMessage();
+			typedMessage = envelope.DeserializeMessage(messageType);
 		} catch (Exception ex) {
 			this._logger.PayloadDeserializationFailed(
 				ex,
@@ -263,24 +286,42 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 		}
 	}
 
-	private static Func<IPublisher, object, DistributedMessageEnvelope, CancellationToken, Task<Result>> BuildDispatcher(Type messageType) {
+	// The open generic DispatchTypedAsync<T>, closed per message type and cached as a
+	// delegate in _dispatchers — so the per-message dispatch path carries no reflection.
+	private static readonly MethodInfo DispatchTypedMethod =
+		typeof(DistributedMessageReceiver).GetMethod(
+			nameof(DispatchTypedAsync),
+			BindingFlags.NonPublic | BindingFlags.Static)!;
 
-		var receivedType = typeof(DistributedMessageReceived<>).MakeGenericType(messageType);
-		var publishMethod = typeof(IPublisher)
-			.GetMethod(nameof(IPublisher.PublishAsync))
-			!.MakeGenericMethod(receivedType);
+	private static Func<IPublisher, object, DistributedMessageEnvelope, CancellationToken, Task<Result>> BuildDispatcher(Type messageType) =>
+		DispatchTypedMethod
+			.MakeGenericMethod(messageType)
+			.CreateDelegate<Func<IPublisher, object, DistributedMessageEnvelope, CancellationToken, Task<Result>>>();
 
-		// Pin Sequential explicitly to decouple receiver behavior from the host app's
-		// global Conductor PublisherStrategy. Apps can't usefully attribute our wrapper
-		// type, and an app changing its default to Parallel shouldn't change inbound
-		// dispatch ordering. Sequential also runs every handler (stopOnFailure: false)
-		// so audit/observer-style co-handlers still fire when a primary handler throws.
-		return async (publisher, message, envelope, ct) => {
-			var wrapper = Activator.CreateInstance(receivedType, message, envelope)!;
-			var task = (Task<Result>)publishMethod.Invoke(publisher, [wrapper, PublisherStrategy.Sequential, ct])!;
-			return await task.ConfigureAwait(false);
-		};
-	}
+	/// <summary>
+	/// Typed inbound dispatch: wraps the received payload in
+	/// <see cref="DistributedMessageReceived{TMessage}"/> and publishes it through Conductor.
+	/// A delegate closed over the concrete message type is built once per type (via
+	/// <see cref="BuildDispatcher"/>) and cached in <c>_dispatchers</c>, so the per-message
+	/// path is a direct call with no reflection.
+	/// </summary>
+	/// <remarks>
+	/// Pins <see cref="PublisherStrategy.Sequential"/> to decouple receiver behavior from the
+	/// host app's global Conductor <c>PublisherStrategy</c>: apps can't usefully attribute our
+	/// wrapper type, an app switching its default to Parallel shouldn't reorder inbound
+	/// dispatch, and Sequential runs every handler (<c>stopOnFailure: false</c>) so
+	/// audit/observer co-handlers still fire when a primary handler throws.
+	/// </remarks>
+	private static Task<Result> DispatchTypedAsync<TMessage>(
+		IPublisher publisher,
+		object message,
+		DistributedMessageEnvelope envelope,
+		CancellationToken ct)
+		where TMessage : notnull, DistributedMessage =>
+		publisher.PublishAsync(
+			new DistributedMessageReceived<TMessage>((TMessage)message, envelope),
+			PublisherStrategy.Sequential,
+			ct);
 
 	public void Dispose() {
 		if (this._disposed) {

@@ -109,18 +109,15 @@ public static class HostingExtensions {
 				builder.Services.AddSingleton<IHostedService>(sp =>
 					sp.GetRequiredService<DefaultBatchProcessor>());
 
-				// Register the delivery engine as the DistributedMessage channel's
-				// transport publisher (Replace so it wins over any no-op default), and
-				// the outbound Conductor bridge that routes published DistributedMessage
-				// notifications through it.
-				builder.Services.AddSingleton<DefaultTransportPublisher>();
-				builder.Services.Replace(
-					ServiceDescriptor.Singleton<IDistributedTransportPublisher<DistributedMessage>>(sp =>
-						sp.GetRequiredService<DefaultTransportPublisher>()));
+				// Register the delivery engine and the outbound Conductor bridge that
+				// routes published DistributedMessage notifications through it. The engine
+				// is the outbound seam — the bridge injects it directly, so it is resolved
+				// by no interface (there is no transport-publisher abstraction to replace).
+				builder.Services.AddSingleton<DistributedMessageDeliveryEngine>();
 				builder.Services.TryAddEnumerable(
 					ServiceDescriptor.Transient(
 						typeof(INotificationHandler<>),
-						typeof(OutboundDistributedMessageHandler<>)));
+						typeof(DistributedMessageSender<>)));
 			}
 
 			// Register the Distributed Message Receiver — conditional on the

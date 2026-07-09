@@ -427,7 +427,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 		const string BatchDeliveryEnded = "BatchDeliveryEnded";
 
 		// Setup method state
-		var batchStopwatch = Stopwatch.StartNew();
+		var batchStartTimestamp = Stopwatch.GetTimestamp();
 		var countOfBatchKinds = 0;
 		var totalSuccessCount = 0;
 		var totalFailureCount = 0;
@@ -480,10 +480,9 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 			}
 
 		} catch (OperationCanceledException) {
-			batchStopwatch.Stop();
 			batchActivity?.AddEvent(new ActivityEvent(BatchDeliveryCanceled));
 		} catch (Exception ex) {
-			batchStopwatch.Stop();
+			var elapsedMs = (long)Stopwatch.GetElapsedTime(batchStartTimestamp).TotalMilliseconds;
 
 			// Capture exception
 			processErrorTags = new() {
@@ -500,12 +499,12 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 				   item.Message.Subject,
 				   item.Target,
 				   ex.GetType().Name,
-				   batchStopwatch.ElapsedMilliseconds);
+				   elapsedMs);
 				totalFailureCount++;
 			}
 
 		} finally {
-			batchStopwatch.Stop();
+			var elapsedMs = (long)Stopwatch.GetElapsedTime(batchStartTimestamp).TotalMilliseconds;
 
 			// Feed the rolling observables for the batching policy
 			this.RecordObservables(totalSuccessCount + totalFailureCount, totalFailureCount);
@@ -519,7 +518,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 			this._metricsService.RecordBatchProcessed(
 				batchCapacity,
 				batch.Count,
-				batchStopwatch.ElapsedMilliseconds,
+				elapsedMs,
 				totalSuccessCount,
 				totalFailureCount,
 				standardCount,
@@ -528,7 +527,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 
 			// Add ending event
 			var completionTags = new ActivityTagsCollection {
-				{ TagNames.BatchDuration, batchStopwatch.ElapsedMilliseconds },
+				{ TagNames.BatchDuration, elapsedMs },
 				{ TagNames.BatchCapacity, batchCapacity },
 				{ TagNames.BatchSize, batch.Count },
 				{ TagNames.BatchStandardCount, standardCount },

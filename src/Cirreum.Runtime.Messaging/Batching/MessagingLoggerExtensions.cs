@@ -5,7 +5,7 @@ using Microsoft.Extensions.Logging;
 using System;
 
 /// <summary>
-/// Logging class for DefaultTransportPublisher using LoggerMessage source generation
+/// Logging class for DistributedMessageDeliveryEngine using LoggerMessage source generation
 /// </summary>
 internal static partial class MessagingLoggerExtensions {
 

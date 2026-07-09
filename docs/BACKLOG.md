@@ -19,24 +19,6 @@ change, a consumer upgrade, a coordinated multi-repo rollout).
 
 ## Queued
 
-### README: "Where handlers live — contracts in the Domain, handlers in the app"
-
-- **SemVer:** Unspecified (docs)
-- **Trigger:** The ADR-0029 Runtime.Messaging release (folds into that README pass)
-- **Noted:** 2026-07-07
-
-**Why:** A shared-Domain, multi-deployable shop (one Domain referenced by an API + an
-ACA Job + a Function app) will hit a footgun: Conductor discovers handlers by assembly
-scan, so a handler's *project* is its *deployment scope*. A handler placed in the shared
-Domain is registered — and latent — in **every** deployable. Document the principle:
-**the event type (`: DistributedMessage`) is the shared contract and lives in the
-Domain; handlers live in the app that should run them.** Cover the `INotificationHandler<T>`
-(local, fires at publish — "comes home") vs `INotificationHandler<DistributedMessageReceived<T>>`
-(remote, fires on receipt) distinction as the way to express "process only remotely,"
-and note the one deliberate exception (a genuinely cross-cutting local reaction every
-deployment must perform may live in the Domain as a raw-`T` handler). Include the
-project-layout sketch.
-
 ### Honor `ReceiverOptions.PrefetchCount` and `MaxAutoLockRenewalDuration`
 
 - **SemVer:** Minor

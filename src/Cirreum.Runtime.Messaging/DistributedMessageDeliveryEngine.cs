@@ -14,19 +14,19 @@ using System.Threading;
 using System.Threading.Tasks;
 
 /// <summary>
-/// The delivery engine for the <see cref="DistributedMessage"/> channel. Implements the
-/// channel's <see cref="IDistributedTransportPublisher{TBase}"/> contract over the
-/// configured <see cref="IMessagingClient"/> and provides the typed entry point used by
-/// the outbound Conductor bridge (<see cref="OutboundDistributedMessageHandler{TMessage}"/>).
+/// The delivery engine for the <see cref="DistributedMessage"/> channel. Sends typed
+/// messages over the configured <see cref="IMessagingClient"/> for the outbound Conductor
+/// bridge (<see cref="DistributedMessageSender{TMessage}"/>), which injects it directly —
+/// the engine is the outbound seam, resolved by no interface.
 /// </summary>
 /// <remarks>
 /// Supports both direct (synchronous) and background (batched) delivery modes,
 /// with integrated telemetry, distributed tracing, and error handling. Per-message
 /// delivery preferences (<see cref="DistributedMessage.UseBackgroundDelivery"/> and
-/// <see cref="DistributedMessage.Priority"/>) are honored on the typed path; the
-/// envelope-level <see cref="PublishAsync"/> contract applies the channel defaults.
+/// <see cref="DistributedMessage.Priority"/>) are honored on the typed
+/// <see cref="PublishMessageAsync{T}"/> path.
 /// </remarks>
-internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher<DistributedMessage>, IDisposable {
+internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 
 	/// <summary>
 	/// Activity source for distributed tracing of message publishing operations
@@ -36,7 +36,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 	/// <summary>
 	/// Logger for recording publisher events and errors
 	/// </summary>
-	private readonly ILogger<DefaultTransportPublisher> _logger;
+	private readonly ILogger<DistributedMessageDeliveryEngine> _logger;
 
 	/// <summary>
 	/// Processor for batched message delivery
@@ -89,7 +89,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 	private bool _disposed;
 
 	/// <summary>
-	/// Initializes a new instance of the DefaultTransportPublisher class.
+	/// Initializes a new instance of the DistributedMessageDeliveryEngine class.
 	/// </summary>
 	/// <param name="serviceProvider">Service provider for resolving dependencies</param>
 	/// <param name="batchProcessor">Processor for batched message delivery</param>
@@ -99,14 +99,14 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 	/// <param name="options">Configuration options for the distributed-messaging channel</param>
 	/// <param name="logger">Logger for recording publisher events and errors</param>
 	/// <param name="metricsService">Service for recording messaging metrics</param>
-	public DefaultTransportPublisher(
+	public DistributedMessageDeliveryEngine(
 		IServiceProvider serviceProvider,
 		IBatchProcessor batchProcessor,
 		IDistributedMessageRegistry registry,
 		IDomainEnvironment environment,
 		INodeIdProvider nodeIdProvider,
 		IOptions<DistributedMessagingOptions> options,
-		ILogger<DefaultTransportPublisher> logger,
+		ILogger<DistributedMessageDeliveryEngine> logger,
 		IMessagingMetricsService metricsService) {
 
 		// Capture required services
@@ -151,7 +151,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 		where T : DistributedMessage {
 
 		ObjectDisposedException.ThrowIf(this._disposed, this);
-		var stopwatch = Stopwatch.StartNew();
+		var startTimestamp = Stopwatch.GetTimestamp();
 
 		using var scope = this._logger.BeginScope(message);
 		using var activity = this._publishMessageActivity
@@ -187,13 +187,12 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 						target,
 						message.Priority,
 						token);
-				stopwatch.Stop();
 
 				// Record message queued
 				this._metricsService.RecordMessageQueued(
 					subject,
 					target,
-					stopwatch.ElapsedMilliseconds,
+					(long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds,
 					message.Priority);
 
 				// Add trace event
@@ -212,13 +211,12 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 
 			// Standard (sequential) processing
 			await this.SendDirectAsync(outboundMessage, target, token);
-			stopwatch.Stop();
 
 			// Record successful delivery metrics
 			this._metricsService.RecordMessageDelivered(
 				subject,
 				target,
-				stopwatch.ElapsedMilliseconds);
+				(long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds);
 
 			// Add trace event
 			activity?.AddEvent(new(
@@ -228,100 +226,11 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 		} catch (OperationCanceledException oex) when (oex.CancellationToken == token) {
 			// no logging, just return, as we're being shutdown/cancelled
 		} catch (Exception ex) {
-			stopwatch.Stop();
 			this._metricsService.RecordMessageFailed(
 				subject,
 				target,
 				ex.GetType().Name,
-				stopwatch.ElapsedMilliseconds);
-			throw;
-		}
-	}
-
-	/// <inheritdoc/>
-	/// <remarks>
-	/// The wire-format envelope carries no per-message delivery preferences, so this
-	/// surface applies the channel defaults: background (batched) delivery at
-	/// <see cref="DistributedMessagePriority.Standard"/> priority when
-	/// <c>BackgroundDelivery.UseBackgroundDeliveryByDefault</c> is set, otherwise a
-	/// direct send.
-	/// </remarks>
-	public async Task PublishAsync(
-		DistributedMessageEnvelope envelope,
-		MessageTarget target,
-		CancellationToken cancellationToken = default) {
-
-		ObjectDisposedException.ThrowIf(this._disposed, this);
-		var stopwatch = Stopwatch.StartNew();
-
-		using var activity = this._publishMessageActivity
-			.CreateActivity(
-				DistributeMessagingStrings.Activity_PublishMessageAsync,
-				ActivityKind.Producer);
-		activity?.Start();
-
-		var subject = $"{envelope.MessageIdentifier}.v{envelope.MessageVersion}";
-
-		// Received a message for delivery...
-		this._metricsService.RecordMessageReceived(
-			subject,
-			target);
-
-		try {
-
-			// Generate the outbound message
-			var outboundMessage = this.CreateOutboundMessage(envelope, subject);
-
-			// Background (parallel) processing...
-			if (this.useBackgroundDeliveryByDefault) {
-
-				var queuedPriority =
-					await this._batchProcessor.SubmitMessageAsync(
-						outboundMessage,
-						target,
-						DistributedMessagePriority.Standard,
-						cancellationToken);
-				stopwatch.Stop();
-
-				this._metricsService.RecordMessageQueued(
-					subject,
-					target,
-					stopwatch.ElapsedMilliseconds,
-					DistributedMessagePriority.Standard);
-
-				activity?.AddEvent(new(
-					name: DistributeMessagingStrings.Event_MessageQueueForDelivery,
-					tags: [
-						new(DistributeMessagingStrings.Tag_Subject, subject),
-						new(DistributeMessagingStrings.Tag_QueuedPriority, queuedPriority.ToString())
-					])
-				);
-
-				return;
-			}
-
-			// Standard (sequential) processing
-			await this.SendDirectAsync(outboundMessage, target, cancellationToken);
-			stopwatch.Stop();
-
-			this._metricsService.RecordMessageDelivered(
-				subject,
-				target,
-				stopwatch.ElapsedMilliseconds);
-
-			activity?.AddEvent(new(
-				name: DistributeMessagingStrings.Event_MessageSentDirectly,
-				tags: [new(DistributeMessagingStrings.Tag_Subject, subject)]));
-
-		} catch (OperationCanceledException oex) when (oex.CancellationToken == cancellationToken) {
-			// no logging, just return, as we're being shutdown/cancelled
-		} catch (Exception ex) {
-			stopwatch.Stop();
-			this._metricsService.RecordMessageFailed(
-				subject,
-				target,
-				ex.GetType().Name,
-				stopwatch.ElapsedMilliseconds);
+				(long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds);
 			throw;
 		}
 	}
@@ -370,7 +279,7 @@ internal sealed class DefaultTransportPublisher : IDistributedTransportPublisher
 	}
 
 	/// <summary>
-	/// Releases resources used by the DefaultTransportPublisher.
+	/// Releases resources used by the DistributedMessageDeliveryEngine.
 	/// </summary>
 	/// <remarks>
 	/// Properly disposes of all owned resources including the metrics service,

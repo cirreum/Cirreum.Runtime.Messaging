@@ -12,10 +12,10 @@
 
 **Cirreum.Runtime.Messaging** composes the messaging stack for Cirreum server hosts and implements the Cirreum Distributed Messaging feature. A single `AddMessaging()` call does both:
 
-- **Messaging services composition** — registers the configured messaging providers (Azure Service Bus) from `Cirreum:Messaging:Providers`, exposing each instance as a keyed `IMessagingClient` (queues, topics, subscriptions) with health checks and tracing. Apps can consume these clients directly for their own messaging workflows, with or without the distributed-messaging layer.
+- **Messaging services composition** — registers the configured messaging providers from `Cirreum:Messaging:Providers`, exposing each instance as a keyed `IMessagingClient` (queues, topics, subscriptions) with health checks and tracing. Apps can consume these clients directly for their own messaging workflows, with or without the distributed-messaging layer.
 - **Distributed Messaging** — the runtime delivery engine for the `DistributedMessage` channel. The messaging *model* — `DistributedMessage`, the wire envelope, the registry, and the `IBatchingPolicy` strategy — ships in `Cirreum.Messaging.Distributed`; this package provides the moving parts: the outbound Conductor bridge, the policy-driven batching processor, the transport publisher, the inbound receiver, and OpenTelemetry metrics, offering both synchronous and batched delivery with built-in resilience.
 
-## Key Features
+## Distributed Messaging Key Features
 
 ### 🚀 Flexible Message Delivery
 - **Dual-mode publishing**: Direct (synchronous) and background (batched) delivery, per message or by channel default
@@ -232,7 +232,7 @@ The envelope properties available to every handler:
 |---|---|
 | `MessageIdentifier` | The stable wire-level identifier (e.g., `"auth.evidence.changed"`) |
 | `MessageVersion` | The version string (e.g., `"1"`) |
-| `MessageType` | The full .NET type name of the payload |
+| `MessageType` | The assembly-hinted .NET type name of the payload — **diagnostic metadata only** (logging / dead-letter triage); inbound resolution goes through the registry by `(MessageIdentifier, MessageVersion)`, never this string |
 | `ProducerId` | Head/app identity that published — useful for audit |
 | `PublishedAt` | UTC timestamp captured at envelope creation — useful for latency metrics or replay detection (nullable for envelopes from older senders) |
 
@@ -240,15 +240,17 @@ See the [Configuration Guide](https://github.com/cirreum/Cirreum.Runtime.Messagi
 
 ## Choosing a Dispatch Path
 
-`[MessageVersion]` + `DistributedMessage` define a *wire contract*. Publishing through Conductor is one *transport* for that contract, not the only one — three patterns are valid, and serious business workflows often outgrow the first:
+The value of the framework path is **distribution with no setup beyond your send config**: mark a type `[MessageVersion]` `: DistributedMessage`, point the `Distributed` section at a transport instance, and `IPublisher.PublishAsync(msg)` fans it out — Cirreum owns the envelope, serialization, routing, and delivery. A **consumer** is just as light: another app references the Domain that defines the message type, adds `Cirreum.Runtime.Messaging`, configures a receiver, and writes an `INotificationHandler<DistributedMessageReceived<T>>` — no shared broker code, no hand-rolled envelopes. And because each type carries a stable `[MessageVersion]` identity (an identifier plus a schema version), the contract can **version over time by attribute alone** — the identifier is the durable wire key, the version rides the envelope.
+
+`[MessageVersion]` + `DistributedMessage` define a *wire contract*; publishing through Conductor is one *transport* for it. Three patterns are valid — and the choice is **queue topology and ownership, not how much load you expect**:
 
 | Pattern | Wire contract | Routing & consumption | Right for |
 |---|---|---|---|
-| **Full framework** | `[MessageVersion]` + `DistributedMessage` | `IPublisher.PublishAsync()` → the channel's configured queue/topic; inbound via Conductor handlers | Cross-head state convergence, registry sync, kill switches — "one event, many handlers may react" |
-| **App-routed, framework-formatted** | `[MessageVersion]` + `DistributedMessage` | App-built envelope via `IMessagingClient` to app-chosen queues; app-owned consumer loops | High-volume operational workflows (email, payments, document processing) needing per-workflow queues and tuning |
+| **Full framework** | `[MessageVersion]` + `DistributedMessage` | `IPublisher.PublishAsync()` → the channel's configured queue/topic; inbound via Conductor handlers | Any event you want distributed with **zero transport code** — convergence, registry sync, kill switches, *or* a high-traffic domain event — all sharing the channel's one configured queue/topic |
+| **App-routed, framework-formatted** | `[MessageVersion]` + `DistributedMessage` | App-built envelope via `IMessagingClient` to app-chosen queues; app-owned consumer loops | A workflow that wants its **own** queue — independent scaling/concurrency, tuning, and DLQ isolation from other framework eventing (email, payments, document processing) |
 | **Fully bespoke** | Ad-hoc message classes | Raw `IMessagingClient` end-to-end | Legacy integration, external broker conventions, extreme tuning |
 
-The framework path funnels everything through the channel's single configured queue/topic — deliberately, for framework-level eventing. When a workflow needs its own queue, keep Cirreum's envelope vocabulary (stable identifier + version, producer id, publish timestamp, resolvable type) and route it yourself (pattern 2):
+The framework path funnels everything through the channel's single configured queue/topic — deliberately. It carries whatever volume you put on it; you reach for pattern 2 when a stream wants **isolation and independent tuning** (its own queue, concurrency, and DLQ), not because it's "too big" for the framework. The patterns also aren't exclusive — they're independent stacks: run framework Distributed Messaging on one provider (say Azure Service Bus) *and* stand up your own separate `IMessagingClient` on another (AWS, etc.) for bespoke workflows. When a workflow needs its own queue, keep Cirreum's envelope vocabulary (stable identifier + version, producer id, publish timestamp) and route it yourself (pattern 2):
 
 ```csharp
 var envelope = DistributedMessageEnvelope.Create(order, definition, producerId);
@@ -257,7 +259,37 @@ await messagingClient
 	.PublishMessageAsync(OutboundMessage.AsJsonContent(envelope).WithSubject("orders.created.v1.0"));
 ```
 
-Consumers on that queue can still re-materialize the payload with `envelope.ResolveMessageType()` / `DeserializeMessage<T>()`, and audit/observability tooling reads the same envelope shape across all three patterns.
+A consumer on that queue knows the concrete type it expects, so it re-materializes the payload with `envelope.DeserializeMessage<T>()`, and audit/observability tooling reads the same envelope shape across all three patterns.
+
+> ⚠️ **Built for crossing the app boundary — not for fanning out to your own replicas.** Replicas of a single deployment share one subscription, so they are *competing consumers*: exactly one replica processes each message (work-stealing), and the publishing replica skips its own copy via self-echo. Distinct **heads** (different `SubscriptionName`) each receive a copy; replicas *within* a head do not. So `DistributedMessage` is for **inter-dependent apps** — App A publishes, App B consumes — not for notifying every node of the *same* app. For an in-process or same-node reaction, publish a **plain notification** (a type that is *not* `: DistributedMessage`) and handle it with `INotificationHandler<T>`; reserve `DistributedMessage` for work that must leave the process.
+
+## Where Handlers Live — Contracts in the Domain, Handlers in the App
+
+Conductor discovers handlers by **assembly scan**, so a handler's *project* is its *deployment scope*. In a shared-Domain shop — one Domain referenced by an API, an ACA Job, and a Function app — a handler placed in the shared Domain is registered, and latent, in **every** deployable. That is rarely what you want.
+
+The principle:
+
+- **The event type is the shared contract.** A `[MessageVersion]`-tagged `: DistributedMessage` record is the wire vocabulary every deployable agrees on — it lives in the **Domain**.
+- **Handlers live in the app that should run them.** Put a handler in the API project and only the API runs it; put it in the Job and only the Job does.
+
+Two handler shapes express *when* a reaction runs:
+
+| Handler | Fires | Use for |
+|---|---|---|
+| `INotificationHandler<TEvent>` | Locally, **at publish** — the reaction "comes home" in the same process that published | A side effect the publishing app itself must perform |
+| `INotificationHandler<DistributedMessageReceived<TEvent>>` | **On receipt** from the wire, in a consuming replica | "Process this only remotely" — the receiving app reacts, the publisher does not |
+
+```
+Solution/
+├─ MyApp.Domain/                 # shared — referenced by every deployable
+│   └─ Events/OrderPlaced.cs     #   the [MessageVersion] : DistributedMessage contract ONLY
+├─ MyApp.Api/
+│   └─ Handlers/PlaceOrderHandler.cs        # INotificationHandler<DistributedMessageReceived<OrderPlaced>> — reacts on receipt
+└─ MyApp.FulfillmentJob/
+	└─ Handlers/ReserveStockHandler.cs      # its own handler, its own deployment scope
+```
+
+**The one deliberate exception:** a genuinely cross-cutting local reaction that *every* deployment must perform (say, an audit write on receipt) may live in the Domain as a raw-`TEvent` handler — precisely because you *want* it registered everywhere. Reach for it knowingly, not by accident.
 
 ## Documentation
 

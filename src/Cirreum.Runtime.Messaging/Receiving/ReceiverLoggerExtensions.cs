@@ -53,8 +53,18 @@ internal static partial class ReceiverLoggerExtensions {
 	[LoggerMessage(
 		EventId = 2007,
 		Level = LogLevel.Warning,
-		Message = "Receiver: received message with unknown .NET type '{messageType}' (identifier={identifier}, version={version}). Acknowledging without dispatch to prevent redelivery loops; verify all consumers have the message type assembly deployed.")]
+		Message = "Receiver: subscription received a message with unregistered identity (identifier={identifier}, version={version}; wire type hint '{messageType}'). Completing without dispatch — a fan-out subscription normally delivers family members this consumer does not handle.")]
 	public static partial void UnknownMessageType(
+		this ILogger logger,
+		string messageType,
+		string identifier,
+		string version);
+
+	[LoggerMessage(
+		EventId = 2011,
+		Level = LogLevel.Error,
+		Message = "Receiver: queue message has unregistered identity (identifier={identifier}, version={version}; wire type hint '{messageType}'). Dead-lettering for triage; verify the message type's assembly is deployed on this consumer.")]
+	public static partial void UnknownMessageTypeDeadLettered(
 		this ILogger logger,
 		string messageType,
 		string identifier,

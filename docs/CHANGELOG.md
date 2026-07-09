@@ -7,9 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Inbound type resolution is now registry-by-identity.** `DistributedMessageReceiver` resolves the incoming type through the channel registry's `ResolveType(MessageIdentifier, MessageVersion)` — selecting only from this process's own vetted scan set — instead of reflecting over the envelope's CLR type hint. The envelope's `MessageType` is now diagnostic metadata only (logging / dead-letter triage), never a resolution input. Payloads deserialize via `DeserializeMessage(Type)` against the resolved type.
+- **Per-source disposition for an unregistered inbound identity.** A **queue** message whose identity resolves to no local type is now **dead-lettered** for operator triage (a queue is addressed to this consumer, so an unknown identity signals a missing assembly or a producer running ahead). A **topic subscription** message with an unregistered identity is **completed and logged** — a fan-out subscription normally delivers family members a given consumer need not handle, so this is normal weather, never a redelivery loop. Previously both sources completed-and-logged.
+- **Internal delivery types renamed** (no public API): the delivery engine `DefaultTransportPublisher` → `DistributedMessageDeliveryEngine`, and the outbound Conductor bridge `OutboundDistributedMessageHandler<T>` → `DistributedMessageSender<T>`. The engine no longer implements a transport-publisher interface — it is the outbound seam, injected directly by the bridge; the redundant interface registration is gone. Apps that publish via `IPublisher.PublishAsync(...)` and handle via `INotificationHandler<DistributedMessageReceived<T>>` are unaffected.
+- Hot-path timing (per-publish in the delivery engine, per-batch in the batch processor) now uses allocation-free `Stopwatch.GetTimestamp()` / `Stopwatch.GetElapsedTime(...)` instead of allocating a `Stopwatch` instance. No behavioral change.
+- Inbound receiver dispatch now runs through a per-type delegate closed over the concrete message type (cached in the existing dispatcher cache), replacing the per-message `Activator.CreateInstance` + `MethodInfo.Invoke` + `object[]` argument allocation with a direct call. No behavioral change.
+
 ### Updated
 
-- Updated NuGet packages.
+- Updated NuGet packages as part of the lower-layer changes.
 
 ## [2.0.1] - 2026-07-04
 

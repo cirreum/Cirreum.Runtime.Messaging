@@ -10,7 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
-public class DefaultTransportPublisherTests {
+public class DistributedMessageDeliveryEngineTests {
 
 	private static readonly MessageDefinition QueueDefinition = new(
 		"tests.queue",
@@ -26,7 +26,7 @@ public class DefaultTransportPublisherTests {
 	private readonly INodeIdProvider _nodeIdProvider = Substitute.For<INodeIdProvider>();
 	private readonly IMessagingMetricsService _metrics = Substitute.For<IMessagingMetricsService>();
 
-	private DefaultTransportPublisher CreatePublisher(
+	private DistributedMessageDeliveryEngine CreateEngine(
 		bool useBackgroundDeliveryByDefault = false,
 		string? instanceKey = "test-instance") {
 
@@ -49,14 +49,14 @@ public class DefaultTransportPublisherTests {
 			}
 		});
 
-		return new DefaultTransportPublisher(
+		return new DistributedMessageDeliveryEngine(
 			serviceProvider,
 			this._batchProcessor,
 			this._registry,
 			Substitute.For<IDomainEnvironment>(),
 			this._nodeIdProvider,
 			options,
-			NullLogger<DefaultTransportPublisher>.Instance,
+			NullLogger<DistributedMessageDeliveryEngine>.Instance,
 			this._metrics);
 	}
 
@@ -66,9 +66,9 @@ public class DefaultTransportPublisherTests {
 		this._queueSender
 			.PublishMessageAsync(Arg.Do<OutboundMessage>(m => sent = m), Arg.Any<CancellationToken>())
 			.Returns(Task.CompletedTask);
-		var publisher = this.CreatePublisher();
+		var engine = this.CreateEngine();
 
-		await publisher.PublishMessageAsync(new QueueTestMessage("hello"), CancellationToken.None);
+		await engine.PublishMessageAsync(new QueueTestMessage("hello"), CancellationToken.None);
 
 		sent.Should().NotBeNull();
 		sent!.Subject.Should().Be("tests.queue.v1.0");
@@ -83,13 +83,13 @@ public class DefaultTransportPublisherTests {
 
 	[Fact]
 	public async Task PerMessageBackgroundFlag_SubmitsToTheBatchProcessor() {
-		var publisher = this.CreatePublisher(useBackgroundDeliveryByDefault: false);
+		var engine = this.CreateEngine(useBackgroundDeliveryByDefault: false);
 		var message = new QueueTestMessage("hello") {
 			UseBackgroundDelivery = true,
 			Priority = DistributedMessagePriority.TimeSensitive
 		};
 
-		await publisher.PublishMessageAsync(message, CancellationToken.None);
+		await engine.PublishMessageAsync(message, CancellationToken.None);
 
 		await this._batchProcessor.Received(1).SubmitMessageAsync(
 			Arg.Any<OutboundMessage>(),
@@ -107,9 +107,9 @@ public class DefaultTransportPublisherTests {
 
 	[Fact]
 	public async Task ChannelDefaultBackground_AppliesWhenTheMessageDoesNotChoose() {
-		var publisher = this.CreatePublisher(useBackgroundDeliveryByDefault: true);
+		var engine = this.CreateEngine(useBackgroundDeliveryByDefault: true);
 
-		await publisher.PublishMessageAsync(new QueueTestMessage("hello"), CancellationToken.None);
+		await engine.PublishMessageAsync(new QueueTestMessage("hello"), CancellationToken.None);
 
 		await this._batchProcessor.Received(1).SubmitMessageAsync(
 			Arg.Any<OutboundMessage>(),
@@ -119,25 +119,8 @@ public class DefaultTransportPublisherTests {
 	}
 
 	[Fact]
-	public async Task EnvelopePublish_DirectChannelDefault_BroadcastsTopicTargets() {
-		OutboundMessage? sent = null;
-		this._topicSender
-			.BroadcastMessageAsync(Arg.Do<OutboundMessage>(m => sent = m), Arg.Any<CancellationToken>())
-			.Returns(Task.CompletedTask);
-		var publisher = this.CreatePublisher();
-		var envelope = DistributedMessageEnvelope.Create(
-			new QueueTestMessage("hello"), QueueDefinition, "external-producer");
-
-		await publisher.PublishAsync(envelope, MessageTarget.Topic);
-
-		sent.Should().NotBeNull();
-		sent!.Subject.Should().Be("tests.queue.v1.0");
-		sent.Properties["cirreum.producer"].Should().Be("external-producer");
-	}
-
-	[Fact]
 	public void MissingInstanceKey_FailsConstruction() {
-		var act = () => this.CreatePublisher(instanceKey: "");
+		var act = () => this.CreateEngine(instanceKey: "");
 
 		act.Should().Throw<InvalidOperationException>();
 	}

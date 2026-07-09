@@ -42,10 +42,10 @@ public class AddMessagingCompositionTests {
 
 		builder.Services.Should().Contain(d => d.ServiceType == typeof(DefaultBatchProcessor));
 		builder.Services.Should().Contain(d => d.ServiceType == typeof(IBatchProcessor));
-		builder.Services.Should().Contain(d => d.ServiceType == typeof(IDistributedTransportPublisher<DistributedMessage>));
+		builder.Services.Should().Contain(d => d.ServiceType == typeof(DistributedMessageDeliveryEngine));
 		builder.Services.Should().Contain(d =>
 			d.ServiceType == typeof(INotificationHandler<>)
-			&& d.ImplementationType == typeof(OutboundDistributedMessageHandler<>));
+			&& d.ImplementationType == typeof(DistributedMessageSender<>));
 	}
 
 	[Fact]
@@ -55,7 +55,7 @@ public class AddMessagingCompositionTests {
 		builder.AddMessaging();
 
 		builder.Services.Should().NotContain(d => d.ServiceType == typeof(DefaultBatchProcessor));
-		builder.Services.Should().NotContain(d => d.ServiceType == typeof(IDistributedTransportPublisher<DistributedMessage>));
+		builder.Services.Should().NotContain(d => d.ServiceType == typeof(DistributedMessageDeliveryEngine));
 		builder.Services.Should().Contain(d => d.ServiceType == typeof(IDistributedMessageRegistry));
 		builder.Services.Should().Contain(d => d.ServiceType == typeof(INodeIdProvider));
 	}
@@ -99,7 +99,7 @@ public class AddMessagingCompositionTests {
 		builder.AddMessaging();
 
 		builder.Services
-			.Count(d => d.ImplementationType == typeof(OutboundDistributedMessageHandler<>))
+			.Count(d => d.ImplementationType == typeof(DistributedMessageSender<>))
 			.Should().Be(1);
 	}
 

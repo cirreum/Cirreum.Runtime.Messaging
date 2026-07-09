@@ -10,7 +10,7 @@ using Cirreum.Messaging;
 /// </summary>
 /// <typeparam name="TMessage">The type of message to handle, which must derive from
 /// <see cref="DistributedMessage"/>.</typeparam>
-/// <param name="transportPublisher">The channel's delivery engine.</param>
+/// <param name="deliveryEngine">The channel's delivery engine.</param>
 /// <remarks>
 /// <para>
 /// Registered as an open generic against <see cref="INotificationHandler{TNotification}"/>
@@ -24,8 +24,8 @@ using Cirreum.Messaging;
 /// handler's constraint does not catch.
 /// </para>
 /// </remarks>
-internal sealed class OutboundDistributedMessageHandler<TMessage>(
-	DefaultTransportPublisher transportPublisher
+internal sealed class DistributedMessageSender<TMessage>(
+	DistributedMessageDeliveryEngine deliveryEngine
 ) : INotificationHandler<TMessage>
 	where TMessage : notnull, DistributedMessage {
 
@@ -36,6 +36,6 @@ internal sealed class OutboundDistributedMessageHandler<TMessage>(
 	/// <param name="cancellationToken">A token to monitor for cancellation requests.</param>
 	/// <returns>A task representing the asynchronous operation.</returns>
 	public Task HandleAsync(TMessage notification, CancellationToken cancellationToken = default) =>
-		transportPublisher.PublishMessageAsync(notification, cancellationToken);
+		deliveryEngine.PublishMessageAsync(notification, cancellationToken);
 
 }
