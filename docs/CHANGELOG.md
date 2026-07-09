@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-07-09
+
 ### Changed
 
 - **Inbound type resolution is now registry-by-identity.** `DistributedMessageReceiver` resolves the incoming type through the channel registry's `ResolveType(MessageIdentifier, MessageVersion)` — selecting only from this process's own vetted scan set — instead of reflecting over the envelope's CLR type hint. The envelope's `MessageType` is now diagnostic metadata only (logging / dead-letter triage), never a resolution input. Payloads deserialize via `DeserializeMessage(Type)` against the resolved type.
