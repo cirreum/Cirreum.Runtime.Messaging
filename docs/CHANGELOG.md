@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.4] - 2026-07-24
+
 ### Fixed
 
 - **The tracing `ActivitySource` leaked and was duplicated.** `DefaultBatchProcessor` and
