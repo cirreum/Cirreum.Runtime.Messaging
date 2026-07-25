@@ -62,11 +62,6 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 	private readonly IMessagingMetricsService _metricsService;
 
 	/// <summary>
-	/// Activity source for distributed tracing of batch processing
-	/// </summary>
-	private readonly ActivitySource _processBatchActivity;
-
-	/// <summary>
 	/// Client for sending messages to the messaging infrastructure
 	/// </summary>
 	private readonly IMessagingClient _messagingClient;
@@ -155,7 +150,6 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 		this._logger = logger;
 		this._metricsService = metricsService;
 		this._batchingPolicy = batchingPolicy;
-		this._processBatchActivity = new ActivitySource(DistributeMessagingStrings.MessagingNamespace);
 
 		// Resolve Messaging Client
 		var instanceKey = options.Value.InstanceKey;
@@ -432,13 +426,15 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 		var totalSuccessCount = 0;
 		var totalFailureCount = 0;
 
-		using var batchActivity = this._processBatchActivity.CreateActivity(
+		// StartActivity, not CreateActivity + Start: CreateActivity allocates an Activity even
+		// when no listener is attached, and this runs once per batch. Passing no parent context
+		// lets the batch root itself when nothing is ambient (the usual background-loop case)
+		// and link to a real caller when there is one — the previous explicit context invented a
+		// random parent span id that never existed, orphaning the trace, and forced the Recorded
+		// flag past whatever sampler the host configured.
+		using var batchActivity = MessagingTelemetry.ActivitySource.StartActivity(
 			nameof(ProcessBatchAsync),
-			ActivityKind.Producer,
-			new ActivityContext(ActivityTraceId.CreateRandom(), ActivitySpanId.CreateRandom(), ActivityTraceFlags.Recorded),
-			null,
-			null,
-			ActivityIdFormat.W3C);
+			ActivityKind.Producer);
 
 		// Captured error tags, if any
 		ActivityTagsCollection processErrorTags = [];
@@ -446,8 +442,6 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 		// Start...
 		try {
 
-			// Start the activity...
-			batchActivity?.Start();
 			batchActivity?.AddEvent(new ActivityEvent(BatchDeliveryStarted));
 
 			// Log that we started

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The tracing `ActivitySource` leaked and was duplicated.** `DefaultBatchProcessor` and
+  `DistributedMessageDeliveryEngine` each constructed their own `ActivitySource` for the same
+  `Cirreum.Messaging` name — two listener registrations for one logical source — and the batch
+  processor's was never disposed. Both now use a single shared, process-lifetime
+  `MessagingTelemetry.ActivitySource`, which is the correct shape for a source: it is a shared
+  listener registration, not a per-instance resource. The engine no longer disposes it either —
+  doing so had ended tracing for the batch processor and for any engine constructed afterwards.
+- **Spans allocated even when nothing was listening.** Both classes used
+  `CreateActivity(...)` followed by `Start()`, which materializes an `Activity` regardless of
+  whether a listener is attached — once per published message and once per batch. Both now call
+  `StartActivity(...)`, which returns `null` when no listener is registered.
+- **Batch spans invented a parent that never existed.** `ProcessBatchAsync` passed an explicit
+  `ActivityContext` built from a random trace id and a random *parent* span id, producing traces
+  whose root referenced a non-existent span, and forced `ActivityTraceFlags.Recorded` past
+  whatever sampler the host had configured. The batch span now roots itself when nothing is
+  ambient and links to a real caller when there is one, and respects the configured sampler.
+- **The source carried no version.** Both sources were created without one; the source now
+  reports this package's assembly version, matching the meter in
+  `DefaultMessagingMetricsService`.
+
 ## [2.1.3] - 2026-07-24
 
 ### Updated

@@ -29,11 +29,6 @@ using System.Threading.Tasks;
 internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 
 	/// <summary>
-	/// Activity source for distributed tracing of message publishing operations
-	/// </summary>
-	private readonly ActivitySource _publishMessageActivity;
-
-	/// <summary>
 	/// Logger for recording publisher events and errors
 	/// </summary>
 	private readonly ILogger<DistributedMessageDeliveryEngine> _logger;
@@ -130,7 +125,6 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 			$"{environment.RuntimeType}:{Assembly.GetEntryAssembly()?.GetName()?.Name ?? "Unknown"}";
 		this.useBackgroundDeliveryByDefault
 			= options.Value.BackgroundDelivery.UseBackgroundDeliveryByDefault;
-		this._publishMessageActivity = new ActivitySource(DistributeMessagingStrings.MessagingNamespace);
 
 	}
 
@@ -154,11 +148,11 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 		var startTimestamp = Stopwatch.GetTimestamp();
 
 		using var scope = this._logger.BeginScope(message);
-		using var activity = this._publishMessageActivity
-			.CreateActivity(
-				DistributeMessagingStrings.Activity_PublishMessageAsync,
-				ActivityKind.Producer);
-		activity?.Start();
+		// StartActivity, not CreateActivity + Start: CreateActivity allocates an Activity even
+		// when no listener is attached, and this runs on every published message.
+		using var activity = MessagingTelemetry.ActivitySource.StartActivity(
+			DistributeMessagingStrings.Activity_PublishMessageAsync,
+			ActivityKind.Producer);
 
 		var definition = this._registry.GetDefinitionFor<T>();
 		var target = this._registry.GetTargetFor<T>();
@@ -282,8 +276,10 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 	/// Releases resources used by the DistributedMessageDeliveryEngine.
 	/// </summary>
 	/// <remarks>
-	/// Properly disposes of all owned resources including the metrics service,
-	/// activity source, and batch processor to prevent resource leaks.
+	/// Disposes the resources this engine owns — the metrics service and the batch processor.
+	/// The tracing source is deliberately not among them: it is the process-wide shared
+	/// <see cref="MessagingTelemetry.ActivitySource"/>, and disposing it here would end tracing
+	/// for the batch processor and for any engine constructed afterwards.
 	/// </remarks>
 	public void Dispose() {
 		if (this._disposed) {
@@ -292,7 +288,6 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 		this._disposed = true;
 		this._logger.ShuttingDown();
 		this._metricsService.Dispose();
-		this._publishMessageActivity.Dispose();
 		this._batchProcessor.Dispose();
 	}
 
