@@ -13,7 +13,7 @@ using Cirreum.Messaging;
 /// <param name="deliveryEngine">The channel's delivery engine.</param>
 /// <remarks>
 /// <para>
-/// Registered as an open generic against <see cref="INotificationHandler{TNotification}"/>
+/// Registered as an open generic against <see cref="IDomainEventHandler{TDomainEvent}"/>
 /// when the channel has a configured transport, so apps publish once via
 /// <c>IPublisher.PublishAsync(myMessage)</c> and Conductor fans out to all in-process
 /// handlers AND to the external transport.
@@ -26,7 +26,7 @@ using Cirreum.Messaging;
 /// </remarks>
 internal sealed class DistributedMessageSender<TMessage>(
 	DistributedMessageDeliveryEngine deliveryEngine
-) : INotificationHandler<TMessage>
+) : IDomainEventHandler<TMessage>
 	where TMessage : notnull, DistributedMessage {
 
 	/// <summary>

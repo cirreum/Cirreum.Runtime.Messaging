@@ -41,7 +41,7 @@
 
 ### 📥 Inbound Message Dispatch *(added 1.1.0)*
 - **Hosted receiver**: `DistributedMessageReceiver` consumes from queue and/or topic subscription concurrently
-- **Conductor dispatch**: Handlers are standard `INotificationHandler<DistributedMessageReceived<T>>` — auto-discovered, scoped, pipeline-aware
+- **Conductor dispatch**: Handlers are standard `IDomainEventHandler<DistributedMessageReceived<T>>` — auto-discovered, scoped, pipeline-aware
 - **Self-echo prevention**: `cirreum.node` application property + replica identity (`INodeIdProvider`) skip own publishes pre-deserialization
 - **Cross-broker filterable metadata**: Four application properties (`cirreum.identifier`, `cirreum.version`, `cirreum.producer`, `cirreum.node`) stamped on every outbound message for broker-side subscription filtering
 - **Multi-head ready**: Per-deployment `SubscriptionName` differentiates heads; same binary, different config; broker fan-outs messages to all heads
@@ -188,7 +188,7 @@ Configure the receiver in appsettings:
 }
 ```
 
-Implement handlers using the standard Conductor notification pattern — auto-discovered, no registration boilerplate.
+Implement handlers using the standard Conductor domain-event pattern — auto-discovered, no registration boilerplate.
 
 The framework wraps every inbound message in `DistributedMessageReceived<TMessage>` which carries both the typed payload (`Message`) and the original wire envelope (`Envelope`) so handlers can inspect wire-level metadata without re-deserializing or threading additional context:
 
@@ -200,17 +200,17 @@ using Microsoft.Extensions.Logging;
 public sealed class EvidenceInstanceChangeHandler(
 	IEvidenceInstanceRegistry registry,
 	ILogger<EvidenceInstanceChangeHandler> logger
-) : INotificationHandler<DistributedMessageReceived<EvidenceInstanceChangedV1>> {
+) : IDomainEventHandler<DistributedMessageReceived<EvidenceInstanceChangedV1>> {
 	public Task HandleAsync(
-		DistributedMessageReceived<EvidenceInstanceChangedV1> notification,
+		DistributedMessageReceived<EvidenceInstanceChangedV1> domainEvent,
 		CancellationToken ct) {
 		
 		// The typed payload — strongly typed to the wrapped TMessage.
-		var change = notification.Message;
+		var change = domainEvent.Message;
 
 		// The original wire envelope — wire-level metadata for audit, telemetry,
 		// latency calculations, or replay detection.
-		var envelope = notification.Envelope;
+		var envelope = domainEvent.Envelope;
 
 		logger.LogInformation(
 			"Evidence instance {Key} changed (op={Operation}). "
@@ -240,7 +240,7 @@ See the [Configuration Guide](https://github.com/cirreum/Cirreum.Runtime.Messagi
 
 ## Choosing a Dispatch Path
 
-The value of the framework path is **distribution with no setup beyond your send config**: mark a type `[MessageVersion]` `: DistributedMessage`, point the `Distributed` section at a transport instance, and `IPublisher.PublishAsync(msg)` fans it out — Cirreum owns the envelope, serialization, routing, and delivery. A **consumer** is just as light: another app references the Domain that defines the message type, adds `Cirreum.Runtime.Messaging`, configures a receiver, and writes an `INotificationHandler<DistributedMessageReceived<T>>` — no shared broker code, no hand-rolled envelopes. And because each type carries a stable `[MessageVersion]` identity (an identifier plus a schema version), the contract can **version over time by attribute alone** — the identifier is the durable wire key, the version rides the envelope.
+The value of the framework path is **distribution with no setup beyond your send config**: mark a type `[MessageVersion]` `: DistributedMessage`, point the `Distributed` section at a transport instance, and `IPublisher.PublishAsync(msg)` fans it out — Cirreum owns the envelope, serialization, routing, and delivery. A **consumer** is just as light: another app references the Domain that defines the message type, adds `Cirreum.Runtime.Messaging`, configures a receiver, and writes an `IDomainEventHandler<DistributedMessageReceived<T>>` — no shared broker code, no hand-rolled envelopes. And because each type carries a stable `[MessageVersion]` identity (an identifier plus a schema version), the contract can **version over time by attribute alone** — the identifier is the durable wire key, the version rides the envelope.
 
 `[MessageVersion]` + `DistributedMessage` define a *wire contract*; publishing through Conductor is one *transport* for it. Three patterns are valid — and the choice is **queue topology and ownership, not how much load you expect**:
 
@@ -261,7 +261,7 @@ await messagingClient
 
 A consumer on that queue knows the concrete type it expects, so it re-materializes the payload with `envelope.DeserializeMessage<T>()`, and audit/observability tooling reads the same envelope shape across all three patterns.
 
-> ⚠️ **Built for crossing the app boundary — not for fanning out to your own replicas.** Replicas of a single deployment share one subscription, so they are *competing consumers*: exactly one replica processes each message (work-stealing), and the publishing replica skips its own copy via self-echo. Distinct **heads** (different `SubscriptionName`) each receive a copy; replicas *within* a head do not. So `DistributedMessage` is for **inter-dependent apps** — App A publishes, App B consumes — not for notifying every node of the *same* app. For an in-process or same-node reaction, publish a **plain notification** (a type that is *not* `: DistributedMessage`) and handle it with `INotificationHandler<T>`; reserve `DistributedMessage` for work that must leave the process.
+> ⚠️ **Built for crossing the app boundary — not for fanning out to your own replicas.** Replicas of a single deployment share one subscription, so they are *competing consumers*: exactly one replica processes each message (work-stealing), and the publishing replica skips its own copy via self-echo. Distinct **heads** (different `SubscriptionName`) each receive a copy; replicas *within* a head do not. So `DistributedMessage` is for **inter-dependent apps** — App A publishes, App B consumes — not for notifying every node of the *same* app. For an in-process or same-node reaction, publish a **plain domain event** (a type that is *not* `: DistributedMessage`) and handle it with `IDomainEventHandler<T>`; reserve `DistributedMessage` for work that must leave the process.
 
 ## Where Handlers Live — Contracts in the Domain, Handlers in the App
 
@@ -276,15 +276,15 @@ Two handler shapes express *when* a reaction runs:
 
 | Handler | Fires | Use for |
 |---|---|---|
-| `INotificationHandler<TEvent>` | Locally, **at publish** — the reaction "comes home" in the same process that published | A side effect the publishing app itself must perform |
-| `INotificationHandler<DistributedMessageReceived<TEvent>>` | **On receipt** from the wire, in a consuming replica | "Process this only remotely" — the receiving app reacts, the publisher does not |
+| `IDomainEventHandler<TEvent>` | Locally, **at publish** — the reaction "comes home" in the same process that published | A side effect the publishing app itself must perform |
+| `IDomainEventHandler<DistributedMessageReceived<TEvent>>` | **On receipt** from the wire, in a consuming replica | "Process this only remotely" — the receiving app reacts, the publisher does not |
 
 ```
 Solution/
 ├─ MyApp.Domain/                 # shared — referenced by every deployable
 │   └─ Events/OrderPlaced.cs     #   the [MessageVersion] : DistributedMessage contract ONLY
 ├─ MyApp.Api/
-│   └─ Handlers/PlaceOrderHandler.cs        # INotificationHandler<DistributedMessageReceived<OrderPlaced>> — reacts on receipt
+│   └─ Handlers/PlaceOrderHandler.cs        # IDomainEventHandler<DistributedMessageReceived<OrderPlaced>> — reacts on receipt
 └─ MyApp.FulfillmentJob/
 	└─ Handlers/ReserveStockHandler.cs      # its own handler, its own deployment scope
 ```

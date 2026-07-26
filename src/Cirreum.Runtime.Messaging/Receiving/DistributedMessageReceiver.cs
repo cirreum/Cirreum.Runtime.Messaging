@@ -19,7 +19,7 @@ using System.Threading.Tasks;
 /// Hosted service that consumes inbound distributed messages from a queue and/or
 /// topic subscription, deserializes them, wraps them in
 /// <see cref="DistributedMessageReceived{TMessage}"/>, and publishes them via
-/// Conductor so that registered <see cref="INotificationHandler{TNotification}"/>
+/// Conductor so that registered <see cref="IDomainEventHandler{TDomainEvent}"/>
 /// implementations can react.
 /// </summary>
 /// <remarks>

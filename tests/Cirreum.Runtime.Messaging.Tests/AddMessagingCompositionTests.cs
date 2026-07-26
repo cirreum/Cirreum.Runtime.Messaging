@@ -44,7 +44,7 @@ public class AddMessagingCompositionTests {
 		builder.Services.Should().Contain(d => d.ServiceType == typeof(IBatchProcessor));
 		builder.Services.Should().Contain(d => d.ServiceType == typeof(DistributedMessageDeliveryEngine));
 		builder.Services.Should().Contain(d =>
-			d.ServiceType == typeof(INotificationHandler<>)
+			d.ServiceType == typeof(IDomainEventHandler<>)
 			&& d.ImplementationType == typeof(DistributedMessageSender<>));
 	}
 

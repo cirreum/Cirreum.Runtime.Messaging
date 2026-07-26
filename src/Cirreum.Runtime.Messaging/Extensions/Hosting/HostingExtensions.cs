@@ -116,7 +116,7 @@ public static class HostingExtensions {
 				builder.Services.AddSingleton<DistributedMessageDeliveryEngine>();
 				builder.Services.TryAddEnumerable(
 					ServiceDescriptor.Transient(
-						typeof(INotificationHandler<>),
+						typeof(IDomainEventHandler<>),
 						typeof(DistributedMessageSender<>)));
 			}
 

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Conductor's publish/subscribe markers are renamed** — `INotification` → `IDomainEvent`,
+  `INotificationHandler<T>` → `IDomainEventHandler<T>` — following `Cirreum.Kernel` 2.0.0.
+  Cirreum used "notification" for two unrelated concepts: in-application publish/subscribe, and
+  the human-facing state family a client binds to in order to show a person something.
+  `IDomainEvent` names the first for what it is; "notification" now refers only to the second.
+
+  **`INotificationState` and `IScopedNotificationState` keep their names** — they are the
+  human-facing concept, and preserving that separation is the point of the rename. A project-wide
+  find/replace of "Notification" will destroy it.
+
 ## [2.1.4] - 2026-07-24
 
 ### Fixed

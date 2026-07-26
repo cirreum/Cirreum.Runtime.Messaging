@@ -43,7 +43,7 @@ Cirreum.Runtime.Messaging has two roles, both wired by the single `AddMessaging(
 ### Key Architectural Components
 
 #### 1. Outbound Path
-- **OutboundDistributedMessageHandler&lt;TMessage&gt;** (src/Cirreum.Runtime.Messaging/OutboundDistributedMessageHandler.cs) — open-generic `INotificationHandler<>` bridge; intercepts any published `DistributedMessage` and forwards it to the engine. Registered explicitly by the hosting extension (internal type, so Conductor's public-type assembly scan can't double-register it).
+- **OutboundDistributedMessageHandler&lt;TMessage&gt;** (src/Cirreum.Runtime.Messaging/OutboundDistributedMessageHandler.cs) — open-generic `IDomainEventHandler<>` bridge; intercepts any published `DistributedMessage` and forwards it to the engine. Registered explicitly by the hosting extension (internal type, so Conductor's public-type assembly scan can't double-register it).
 - **DefaultTransportPublisher** (src/Cirreum.Runtime.Messaging/DefaultTransportPublisher.cs) — the delivery engine. Implements the channel contract `IDistributedTransportPublisher<DistributedMessage>` (envelope-level, channel-default semantics) and exposes the typed `PublishMessageAsync<T>` path (per-message `UseBackgroundDelivery`/`Priority` honored). Registered with `Replace` so it wins over the framework's `EmptyTransportPublisher<>` no-op.
 - Message definitions and queue/topic routing come from the shipped `DistributedMessageRegistry`, initialized at startup via `DistributedMessageRegistryBootstrap` (a `Cirreum.Startup` `ISystemInitializer`, discovered by the startup assembly scan — no hosting registration needed).
 
