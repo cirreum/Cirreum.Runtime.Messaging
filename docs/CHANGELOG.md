@@ -19,6 +19,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   human-facing concept, and preserving that separation is the point of the rename. A project-wide
   find/replace of "Notification" will destroy it.
 
+  **Distributed-message consumers need a one-line interface change each** —
+  `INotificationHandler<DistributedMessageReceived<T>>` becomes
+  `IDomainEventHandler<DistributedMessageReceived<T>>`. That combination names this package's
+  `DistributedMessageReceived<T>` alongside a marker owned by `Cirreum.Kernel`, so it appears in no
+  other package's migration guide; the walkthrough is in `RELEASE-NOTES-v2.2.0.md`. Applications
+  that only publish need a re-pin.
+
+  **This is a minor, not a major.** Every reference to the renamed markers in this package is inside
+  an `internal sealed` type or an XML doc comment — `DistributedMessage`, `[MessageVersion]`,
+  `IPublisher.PublishAsync`, `AddMessaging()` and the batching seam are untouched. The break
+  consumers hit belongs to `Cirreum.Kernel` / `Cirreum.Contracts`, both of which went 2.0.0 to
+  signal it, and this release cannot be taken without them.
+
+  Wire compatibility is unaffected in both directions, so a 2.1.x publisher and a 2.2.0 consumer can
+  run side by side during a rolling deployment.
+
 ## [2.1.4] - 2026-07-24
 
 ### Fixed
