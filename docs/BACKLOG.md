@@ -21,9 +21,20 @@ change, a consumer upgrade, a coordinated multi-repo rollout).
 
 ### Honor `ReceiverOptions.PrefetchCount` and `MaxAutoLockRenewalDuration`
 
-- **SemVer:** Minor
+- **SemVer:** Major
 - **Trigger:** `Cirreum.Messaging` receiver-creation API grows an options parameter
 - **Noted:** 2026-07-04
+
+> **Tail of a three-repo chain — do not start here.** The head is `Cirreum.Messaging`
+> (Common), which owns the contract that must move first; then `Cirreum.Messaging.Azure`
+> (Infrastructure) maps the values onto the SDK. Both carry a mirror of this item, and the
+> Common one is marked `Minor` so it surfaces early, while acting on it is still cheap.
+>
+> **SemVer raised from `Minor` to `Major` on 2026-07-27**, matching `Cirreum.Messaging.Azure`.
+> The work here is additive, but it cannot start until the upstream contract moves — so
+> surfacing it on every minor of this package is noise. It fired at the tail of the Kernel 2.0.0
+> wave, after Common and Infrastructure had shipped and closed, when the only way to act on it
+> was to reopen two rungs from the bottom.
 
 **Why:** The shipped `ReceiverOptions` (from `Cirreum.Messaging.Distributed`)
 carries `PrefetchCount` and `MaxAutoLockRenewalDuration`, but
