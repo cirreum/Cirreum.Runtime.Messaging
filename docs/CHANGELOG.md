@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Updated
+
+- Updated NuGet packages (Cirreum spine 4.0.1 wave: records-only grant semantics via `Cirreum.Domain` 4.0.1 / `Cirreum.Contracts` 4.0.1; Infrastructure and Runtime repins).
+
 ## [2.2.2] - 2026-07-30
 
 ### Updated
