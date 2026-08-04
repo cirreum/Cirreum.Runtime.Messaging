@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`ReceiverOptions.PrefetchCount` reaches the broker.** The receiver passes it through the
+  tuned `UseQueueReceiver` / `UseSubscription` overloads (`Cirreum.Messaging` 1.1.1 →
+  `Cirreum.Messaging.Azure` 1.2.0), completing the three-repo receiver-tuning chain. ⚠️ The
+  documented default of `10` now actually applies where the broker SDK's own default
+  (no prefetch) silently did before — operators who want prefetch off set `PrefetchCount: 0`.
+  (From the backlog.)
+- **`ReceiverOptions.MaxAutoLockRenewalDuration` is honored** — implemented where lock
+  renewal belongs: the receive loop renews the message's broker-side lock on a fixed 15-second
+  cadence while handlers run, capped at the configured duration (default 5 minutes; zero
+  disables), stopping renewal before any ack. Long-running handlers no longer lose their lock
+  mid-processing and trigger duplicate redelivery. A renewal failure logs a warning
+  (event 2012) and stops renewing — broker redelivery applies if the lock then expires.
+
+### Updated
+
+- Re-pinned `Cirreum.Messaging` `1.0.109` → `1.1.1` (the `ReceiverTuning` contract),
+  `Cirreum.Messaging.Azure` `1.1.0` → `1.2.0` (the Service Bus prefetch mapping), and
+  `Cirreum.Domain` `4.0.1` → `4.2.0` (Cirreum spine 4.2.0 wave).
+
 ## [2.2.3] - 2026-07-31
 
 ### Updated

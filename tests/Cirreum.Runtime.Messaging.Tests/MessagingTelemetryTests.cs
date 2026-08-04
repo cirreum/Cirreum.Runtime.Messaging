@@ -15,15 +15,26 @@ using System.Diagnostics;
 /// process-lifetime: components start spans on it and never dispose it, and a span must cost
 /// nothing when nobody is listening.
 /// </summary>
+/// <remarks>
+/// The source is process-wide and other test classes publish through engines on it in
+/// parallel, so a listener here would capture their spans too. Each capturing test starts a
+/// root scope activity and the listener records only activities from that trace — keeping the
+/// assertions deterministic without giving up test parallelism. (The scope filter also keeps
+/// the capture list single-threaded: foreign spans arrive on foreign threads.)
+/// </remarks>
 public sealed class MessagingTelemetryTests {
 
 	private const string SourceName = "Cirreum.Messaging";
 
-	private static ActivityListener ListenerFor(ICollection<Activity> started) {
+	private static ActivityListener ListenerFor(ICollection<Activity> started, string? rootId = null) {
 		var listener = new ActivityListener {
 			ShouldListenTo = source => source.Name == SourceName,
 			Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
-			ActivityStarted = started.Add
+			ActivityStarted = activity => {
+				if (rootId is null || activity.RootId == rootId) {
+					started.Add(activity);
+				}
+			}
 		};
 		ActivitySource.AddActivityListener(listener);
 		return listener;
@@ -53,8 +64,9 @@ public sealed class MessagingTelemetryTests {
 
 	[Fact]
 	public void Starting_a_span_with_a_listener_produces_one() {
+		using var scope = new Activity("test-scope").Start();
 		var started = new List<Activity>();
-		using var listener = ListenerFor(started);
+		using var listener = ListenerFor(started, scope.RootId);
 
 		using var activity = MessagingTelemetry.ActivitySource.StartActivity("probe", ActivityKind.Producer);
 
@@ -68,8 +80,9 @@ public sealed class MessagingTelemetryTests {
 
 	[Fact]
 	public async Task Publishing_emits_a_span_on_the_shared_source() {
+		using var scope = new Activity("test-scope").Start();
 		var started = new List<Activity>();
-		using var listener = ListenerFor(started);
+		using var listener = ListenerFor(started, scope.RootId);
 		var harness = new EngineHarness();
 
 		await harness.Engine.PublishMessageAsync(new QueueTestMessage("hello"), CancellationToken.None);
@@ -86,8 +99,9 @@ public sealed class MessagingTelemetryTests {
 		var harness = new EngineHarness();
 		harness.Engine.Dispose();
 
+		using var scope = new Activity("test-scope").Start();
 		var started = new List<Activity>();
-		using var listener = ListenerFor(started);
+		using var listener = ListenerFor(started, scope.RootId);
 		using var activity = MessagingTelemetry.ActivitySource.StartActivity("after-dispose", ActivityKind.Producer);
 
 		activity.Should().NotBeNull();

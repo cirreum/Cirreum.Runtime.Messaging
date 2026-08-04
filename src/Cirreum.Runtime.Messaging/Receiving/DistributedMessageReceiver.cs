@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -78,6 +79,16 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 
 		this._messagingClient = serviceProvider.GetRequiredKeyedService<IMessagingClient>(this._options.InstanceKey);
 	}
+
+	/// <summary>
+	/// Maps the channel's configured broker-level tuning onto the creation-time
+	/// <see cref="ReceiverTuning"/> the provider applies. Lock renewal is deliberately not
+	/// here — it is processing-time behavior this receiver implements itself in
+	/// <see cref="RenewLockWhileProcessingAsync"/>.
+	/// </summary>
+	private ReceiverTuning CreateReceiverTuning() => new() {
+		PrefetchCount = this._options.PrefetchCount
+	};
 
 	public Task StartAsync(CancellationToken cancellationToken) {
 
@@ -147,7 +158,7 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 
 	private async Task RunQueueConsumerAsync(string queueName, CancellationToken ct) {
 		try {
-			var receiver = this._messagingClient.UseQueueReceiver(queueName);
+			var receiver = this._messagingClient.UseQueueReceiver(queueName, this.CreateReceiverTuning());
 			var parallelOptions = new ParallelOptions {
 				MaxDegreeOfParallelism = this._options.MaxConcurrency,
 				CancellationToken = ct,
@@ -167,7 +178,7 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 
 	private async Task RunSubscriptionConsumerAsync(string topic, string subscription, CancellationToken ct) {
 		try {
-			var receiver = this._messagingClient.UseSubscription(topic, subscription);
+			var receiver = this._messagingClient.UseSubscription(topic, subscription, this.CreateReceiverTuning());
 			var parallelOptions = new ParallelOptions {
 				MaxDegreeOfParallelism = this._options.MaxConcurrency,
 				CancellationToken = ct,
@@ -259,13 +270,24 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 			return;
 		}
 
-		// 5. Wrap + publish via Conductor (scoped per-dispatch DI)
+		// 5. Wrap + publish via Conductor (scoped per-dispatch DI), renewing the message
+		// lock while the handlers run. Renewal is guaranteed stopped before any ack.
 		try {
 
 			using var scope = this._serviceProvider.CreateScope();
 			var publisher = scope.ServiceProvider.GetRequiredService<IPublisher>();
 			var dispatcher = this._dispatchers.GetOrAdd(messageType, BuildDispatcher);
-			var result = await dispatcher(publisher, typedMessage, envelope, ct);
+
+			Result result;
+			using (var renewalCts = CancellationTokenSource.CreateLinkedTokenSource(ct)) {
+				var renewalTask = this.RenewLockWhileProcessingAsync(received, source, renewalCts.Token);
+				try {
+					result = await dispatcher(publisher, typedMessage, envelope, ct);
+				} finally {
+					await renewalCts.CancelAsync();
+					await renewalTask;
+				}
+			}
 
 			if (!result.IsSuccess) {
 				this._logger.HandlerFailure(envelope.MessageIdentifier, envelope.MessageVersion);
@@ -283,6 +305,45 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 				envelope.MessageIdentifier,
 				envelope.MessageVersion);
 			await received.AbandonMessageAsync(ct);
+		}
+	}
+
+	// Renewal cadence. Each RenewLockAsync restores the source's full lock duration, so the
+	// only requirement is cadence < lock duration; 15 seconds is conservative for the
+	// shortest lock durations brokers use in practice (Azure Service Bus defaults to 60
+	// seconds). Fast handlers never renew at all — the first renewal only happens when
+	// processing outlives the first interval.
+	private static readonly TimeSpan LockRenewalInterval = TimeSpan.FromSeconds(15);
+
+	/// <summary>
+	/// Renews the message's broker-side lock on a fixed cadence while handlers run, for at
+	/// most <see cref="ReceiverOptions.MaxAutoLockRenewalDuration"/> (zero disables renewal).
+	/// A renewal failure logs once and stops renewing — the broker's redelivery takes over
+	/// when the lock expires.
+	/// </summary>
+	private async Task RenewLockWhileProcessingAsync(
+		IMessagingReceivedMessage received,
+		string source,
+		CancellationToken ct) {
+
+		var maxDuration = this._options.MaxAutoLockRenewalDuration;
+		if (maxDuration <= TimeSpan.Zero) {
+			return;
+		}
+
+		var start = Stopwatch.GetTimestamp();
+		try {
+			while (Stopwatch.GetElapsedTime(start) < maxDuration) {
+				await Task.Delay(LockRenewalInterval, ct);
+				if (Stopwatch.GetElapsedTime(start) >= maxDuration) {
+					return;
+				}
+				await received.RenewLockAsync(ct);
+			}
+		} catch (OperationCanceledException) {
+			// processing completed (or shutdown) — the normal exit
+		} catch (Exception ex) {
+			this._logger.LockRenewalFailed(ex, source);
 		}
 	}
 

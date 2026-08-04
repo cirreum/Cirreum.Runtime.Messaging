@@ -100,4 +100,13 @@ internal static partial class ReceiverLoggerExtensions {
 		string identifier,
 		string version);
 
+	[LoggerMessage(
+		EventId = 2012,
+		Level = LogLevel.Warning,
+		Message = "Receiver: lock renewal failed for a message on {source}; renewal stopped, broker redelivery applies if the lock expires before processing completes.")]
+	public static partial void LockRenewalFailed(
+		this ILogger logger,
+		Exception ex,
+		string source);
+
 }

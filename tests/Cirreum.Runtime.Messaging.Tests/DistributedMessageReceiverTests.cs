@@ -27,8 +27,12 @@ public class DistributedMessageReceiverTests {
 
 	private DistributedMessageReceiver CreateReceiver(bool subscription = false) {
 
-		this._client.UseQueueReceiver("q-inbound").Returns(this._queueReceiver);
-		this._client.UseSubscription("t-inbound", "s-inbound").Returns(this._subscriptionReceiver);
+		// The receiver calls the tuned overloads (it always passes the channel's
+		// PrefetchCount). On a substitute, interface default implementations are
+		// proxy-overridden — they never delegate to the untuned methods — so the tuned
+		// overloads are what must be stubbed.
+		this._client.UseQueueReceiver("q-inbound", Arg.Any<ReceiverTuning>()).Returns(this._queueReceiver);
+		this._client.UseSubscription("t-inbound", "s-inbound", Arg.Any<ReceiverTuning>()).Returns(this._subscriptionReceiver);
 		this._nodeIdProvider.NodeId.Returns("node-1");
 		// The registry resolves the known test identity by (identifier, version); an
 		// unregistered identity resolves to null (the substitute default).
