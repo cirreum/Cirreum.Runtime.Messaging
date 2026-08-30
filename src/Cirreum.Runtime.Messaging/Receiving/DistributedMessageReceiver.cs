@@ -199,8 +199,7 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 	private async Task ProcessAsync(IMessagingReceivedMessage received, string source, bool isQueueSource, CancellationToken ct) {
 
 		// 1. Self-echo skip without paying deserialization cost
-		if (received.Properties.TryGetValue(DistributeMessagingStrings.Property_Node, out var nodeObj)
-			&& nodeObj is string remoteNode
+		if (received.SystemProperties.TryGetValue(DistributeMessagingStrings.Property_Node, out var remoteNode)
 			&& remoteNode == this._nodeIdProvider.NodeId) {
 
 			this._logger.SelfEchoSkipped(remoteNode);

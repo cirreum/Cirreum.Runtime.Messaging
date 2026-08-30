@@ -68,12 +68,12 @@ public class DistributedMessageReceiverTests {
 	private static T Message<T>(
 		string content,
 		TaskCompletionSource<string> acked,
-		IReadOnlyDictionary<string, object>? properties = null)
+		IReadOnlyDictionary<string, string>? systemProperties = null)
 		where T : class, IMessagingReceivedMessage {
 
 		var message = Substitute.For<T>();
 		message.ContentString.Returns(content);
-		message.Properties.Returns(properties ?? new Dictionary<string, object>());
+		message.SystemProperties.Returns(systemProperties ?? new Dictionary<string, string>());
 		message.CompleteMessageAsync(Arg.Any<CancellationToken>())
 			.Returns(_ => { acked.TrySetResult("complete"); return Task.CompletedTask; });
 		message.AbandonMessageAsync(Arg.Any<CancellationToken>())
@@ -131,7 +131,7 @@ public class DistributedMessageReceiverTests {
 		var message = Message<IMessagingQueueReceivedMessage>(
 			EnvelopeJson(new QueueTestMessage("own message")),
 			acked,
-			new Dictionary<string, object> { ["cirreum.node"] = "node-1" });
+			new Dictionary<string, string> { ["cirreum.node"] = "node-1" });
 
 		var ack = await this.RunOneQueueMessageAsync(message, acked);
 

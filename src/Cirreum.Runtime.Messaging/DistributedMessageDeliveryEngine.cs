@@ -234,7 +234,7 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 	/// cross-broker filterable metadata as application properties.
 	/// </summary>
 	/// <remarks>
-	/// Each broker maps <see cref="OutboundMessage.Properties"/> to its native filterable
+	/// Each broker maps <see cref="OutboundMessage.SystemProperties"/> to its native filterable
 	/// property bag (Service Bus ApplicationProperties, AWS SNS message attributes, Kafka
 	/// headers, NATS headers). Filter expressions live in infrastructure-as-code per
 	/// deployment.
@@ -245,10 +245,11 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 			.AsJsonContent(envelope)
 			.WithSubject(subject);
 
-		outboundMessage.Properties[DistributeMessagingStrings.Property_Identifier] = envelope.MessageIdentifier;
-		outboundMessage.Properties[DistributeMessagingStrings.Property_Version] = envelope.MessageVersion;
-		outboundMessage.Properties[DistributeMessagingStrings.Property_Producer] = envelope.ProducerId;
-		outboundMessage.Properties[DistributeMessagingStrings.Property_Node] = this._nodeIdProvider.NodeId;
+		outboundMessage
+			.WithSystemProperty(DistributeMessagingStrings.Property_Identifier, envelope.MessageIdentifier)
+			.WithSystemProperty(DistributeMessagingStrings.Property_Version, envelope.MessageVersion)
+			.WithSystemProperty(DistributeMessagingStrings.Property_Producer, envelope.ProducerId)
+			.WithSystemProperty(DistributeMessagingStrings.Property_Node, this._nodeIdProvider.NodeId);
 
 		return outboundMessage;
 	}

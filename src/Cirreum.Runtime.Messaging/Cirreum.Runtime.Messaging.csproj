@@ -7,9 +7,9 @@
 
 	<ItemGroup>
 		<PackageReference Include="Cirreum.Domain" Version="5.0.0" />
-		<PackageReference Include="Cirreum.Messaging" Version="1.1.1" />
+		<PackageReference Include="Cirreum.Messaging" Version="2.0.0" />
 		<PackageReference Include="Cirreum.Messaging.Distributed" Version="2.0.4" />
-		<PackageReference Include="Cirreum.Messaging.Azure" Version="1.2.3" />
+		<PackageReference Include="Cirreum.Messaging.Azure" Version="2.0.0" />
 		<PackageReference Include="Cirreum.Runtime.ServiceProvider" Version="1.0.24" />
 		<PackageReference Include="Cirreum.Startup" Version="1.0.124" />
 	</ItemGroup>

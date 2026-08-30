@@ -72,10 +72,10 @@ public class DistributedMessageDeliveryEngineTests {
 
 		sent.Should().NotBeNull();
 		sent!.Subject.Should().Be("tests.queue.v1.0");
-		sent.Properties["cirreum.identifier"].Should().Be("tests.queue");
-		sent.Properties["cirreum.version"].Should().Be("1.0");
-		sent.Properties["cirreum.node"].Should().Be("node-1");
-		sent.Properties.Should().ContainKey("cirreum.producer");
+		sent.SystemProperties["cirreum.identifier"].Should().Be("tests.queue");
+		sent.SystemProperties["cirreum.version"].Should().Be("1.0");
+		sent.SystemProperties["cirreum.node"].Should().Be("node-1");
+		sent.SystemProperties.Should().ContainKey("cirreum.producer");
 		this._metrics.Received(1).RecordMessageReceived("tests.queue.v1.0", MessageTarget.Queue);
 		this._metrics.Received(1).RecordMessageDelivered("tests.queue.v1.0", MessageTarget.Queue, Arg.Any<long>());
 		await this._batchProcessor.DidNotReceiveWithAnyArgs().SubmitMessageAsync(default!, default, default, default);

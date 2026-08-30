@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Distributed routing metadata moves to `SystemProperties`.** `DistributedMessageDeliveryEngine`
+  stamps `cirreum.identifier`, `cirreum.version`, `cirreum.producer` and `cirreum.node` into the
+  framework's own bag rather than the application's, and `DistributedMessageReceiver` reads the node
+  marker back from it.
+
+  The self-echo skip previously read the node id out of the shared `Properties` bag through
+  `nodeObj is string remoteNode`. A value returned in any other representation failed the pattern
+  silently: no match, no log, no error, and the node reprocessed its own message. The type test is
+  gone — a system property is a `string` by contract — and the keys now live in a space no
+  application can occupy or overwrite.
+
+  `DistributeMessagingStrings` is unchanged; the four keys are the same, only their carrier moved.
+  Requires Cirreum.Messaging 2.0.0 and Cirreum.Messaging.Azure 2.0.0.
+
+
 ## [2.3.3] - 2026-08-26
 
 ### Updated
