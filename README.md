@@ -42,8 +42,8 @@
 ### 📥 Inbound Message Dispatch *(added 1.1.0)*
 - **Hosted receiver**: `DistributedMessageReceiver` consumes from queue and/or topic subscription concurrently
 - **Conductor dispatch**: Handlers are standard `IDomainEventHandler<DistributedMessageReceived<T>>` — auto-discovered, scoped, pipeline-aware
-- **Self-echo prevention**: `cirreum.node` application property + replica identity (`INodeIdProvider`) skip own publishes pre-deserialization
-- **Cross-broker filterable metadata**: Four application properties (`cirreum.identifier`, `cirreum.version`, `cirreum.producer`, `cirreum.node`) stamped on every outbound message for broker-side subscription filtering
+- **Self-echo prevention**: `cirreum.node` system property + replica identity (`INodeIdProvider`) skip own publishes pre-deserialization
+- **Cross-broker filterable metadata**: Four system properties (`cirreum.identifier`, `cirreum.version`, `cirreum.producer`, `cirreum.node`) stamped on every outbound message for broker-side subscription filtering
 - **Multi-head ready**: Per-deployment `SubscriptionName` differentiates heads; same binary, different config; broker fan-outs messages to all heads
 
 ## Quick Start
