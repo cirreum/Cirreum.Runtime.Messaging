@@ -1,9 +1,11 @@
 namespace Cirreum.Runtime.Messaging;
 
+using Cirreum.Invocation;
 using Cirreum.Messaging;
 using Cirreum.Messaging.Metrics;
 using Cirreum.Messaging.Options;
 using Cirreum.Runtime.Messaging.Batching;
+using Cirreum.Security;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -59,6 +61,12 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 	private readonly string _producerId;
 
 	/// <summary>
+	/// Ambient invocation accessor, when the host composes one. Supplies the subject on whose
+	/// behalf a message is published; <see langword="null"/> means envelopes carry none.
+	/// </summary>
+	private readonly IInvocationContextAccessor? _invocationAccessor;
+
+	/// <summary>
 	/// Provider of the current process replica's node identity
 	/// </summary>
 	private readonly INodeIdProvider _nodeIdProvider;
@@ -102,7 +110,8 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 		INodeIdProvider nodeIdProvider,
 		IOptions<DistributedMessagingOptions> options,
 		ILogger<DistributedMessageDeliveryEngine> logger,
-		IMessagingMetricsService metricsService) {
+		IMessagingMetricsService metricsService,
+		IInvocationContextAccessor? invocationAccessor = null) {
 
 		// Capture required services
 		this._batchProcessor = batchProcessor;
@@ -110,6 +119,7 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 		this._metricsService = metricsService;
 		this._registry = registry;
 		this._nodeIdProvider = nodeIdProvider;
+		this._invocationAccessor = invocationAccessor;
 
 		// Resolve the message client
 		var instanceKey = options.Value.InstanceKey;
@@ -125,6 +135,31 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 			$"{environment.RuntimeType}:{Assembly.GetEntryAssembly()?.GetName()?.Name ?? "Unknown"}";
 		this.useBackgroundDeliveryByDefault
 			= options.Value.BackgroundDelivery.UseBackgroundDeliveryByDefault;
+
+	}
+
+	/// <summary>
+	/// The subject of the current invocation, or <see langword="null"/> when no invocation is
+	/// current or its principal is not authenticated.
+	/// </summary>
+	private DistributedMessageSubject? CreateSubject() {
+
+		var invocation = this._invocationAccessor?.Current;
+		var principal = invocation?.User;
+		if (invocation is null || principal?.Identity?.IsAuthenticated != true) {
+			return null;
+		}
+
+		var id = ClaimsHelper.ResolveId(principal);
+		if (string.IsNullOrWhiteSpace(id)) {
+			return null;
+		}
+
+		return new DistributedMessageSubject(
+			id,
+			ClaimsHelper.ResolveName(principal) ?? id,
+			invocation.EffectiveScheme ?? principal.Identity?.AuthenticationType ?? string.Empty,
+			ClaimsHelper.ResolveRoles(principal));
 
 	}
 
@@ -165,8 +200,8 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 
 		try {
 
-			// Generate the message envelope
-			var envelope = DistributedMessageEnvelope.Create(message, definition, this._producerId);
+			// Generate the message envelope, carrying the current subject when there is one
+			var envelope = DistributedMessageEnvelope.Create(message, definition, this._producerId, this.CreateSubject());
 
 			// Generate the outbound message
 			var outboundMessage = this.CreateOutboundMessage(envelope, subject);

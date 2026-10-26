@@ -2,8 +2,10 @@ namespace Cirreum.Runtime.Messaging.Receiving;
 
 using Cirreum;
 using Cirreum.Conductor;
+using Cirreum.Invocation;
 using Cirreum.Messaging;
 using Cirreum.Messaging.Options;
+using System.Security.Claims;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -56,6 +58,7 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 	private readonly ILogger<DistributedMessageReceiver> _logger;
 	private readonly ReceiverOptions _options;
 	private readonly IMessagingClient _messagingClient;
+	private readonly IHostInvocationFactory? _hostInvocations;
 
 	private readonly ConcurrentDictionary<Type, Func<IPublisher, object, DistributedMessageEnvelope, CancellationToken, Task<Result>>> _dispatchers = new();
 
@@ -69,13 +72,15 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 		INodeIdProvider nodeIdProvider,
 		IDistributedMessageRegistry registry,
 		IOptions<ReceiverOptions> options,
-		ILogger<DistributedMessageReceiver> logger) {
+		ILogger<DistributedMessageReceiver> logger,
+		IHostInvocationFactory? hostInvocations = null) {
 
 		this._serviceProvider = serviceProvider;
 		this._nodeIdProvider = nodeIdProvider;
 		this._registry = registry;
 		this._options = options.Value;
 		this._logger = logger;
+		this._hostInvocations = hostInvocations;
 
 		this._messagingClient = serviceProvider.GetRequiredKeyedService<IMessagingClient>(this._options.InstanceKey);
 	}
@@ -89,6 +94,49 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 	private ReceiverTuning CreateReceiverTuning() => new() {
 		PrefetchCount = this._options.PrefetchCount
 	};
+
+	/// <summary>
+	/// Establishes the per-dispatch scope. With a host invocation factory composed, each
+	/// dispatch is a host invocation sourced <see cref="InvocationSources.Queue"/> — run as
+	/// the envelope's subject when <see cref="ReceiverOptions.TrustEnvelopeSubject"/> is set
+	/// and the envelope carries one, else as the receiving host. Without one, a plain
+	/// service scope, as before.
+	/// </summary>
+	private DispatchScope BeginDispatch(DistributedMessageEnvelope envelope, CancellationToken ct) {
+
+		if (this._hostInvocations is null) {
+			var scope = this._serviceProvider.CreateAsyncScope();
+			return new DispatchScope(scope.ServiceProvider, scope);
+		}
+
+		var subject = this._options.TrustEnvelopeSubject ? envelope.Subject : null;
+		var options = subject is not null && !string.IsNullOrWhiteSpace(subject.Scheme)
+			? new HostInvocationOptions {
+				Source = InvocationSources.Queue,
+				CancellationToken = ct,
+				User = CreatePrincipal(subject),
+				OriginScheme = subject.Scheme,
+				Roles = subject.Roles
+			}
+			: new HostInvocationOptions {
+				Source = InvocationSources.Queue,
+				CancellationToken = ct
+			};
+
+		var invocation = this._hostInvocations.Begin(options);
+		return new DispatchScope(invocation.Context.Services, invocation);
+
+	}
+
+	private static ClaimsPrincipal CreatePrincipal(DistributedMessageSubject subject) =>
+		new(new ClaimsIdentity(
+			[new Claim("sub", subject.Id), new Claim("name", subject.Name)],
+			subject.Scheme));
+
+	private sealed class DispatchScope(IServiceProvider services, IAsyncDisposable lifetime) : IAsyncDisposable {
+		public IServiceProvider Services { get; } = services;
+		public ValueTask DisposeAsync() => lifetime.DisposeAsync();
+	}
 
 	public Task StartAsync(CancellationToken cancellationToken) {
 
@@ -273,8 +321,8 @@ internal sealed class DistributedMessageReceiver : IHostedService, IDisposable {
 		// lock while the handlers run. Renewal is guaranteed stopped before any ack.
 		try {
 
-			using var scope = this._serviceProvider.CreateScope();
-			var publisher = scope.ServiceProvider.GetRequiredService<IPublisher>();
+			await using var dispatch = this.BeginDispatch(envelope, ct);
+			var publisher = dispatch.Services.GetRequiredService<IPublisher>();
 			var dispatcher = this._dispatchers.GetOrAdd(messageType, BuildDispatcher);
 
 			Result result;

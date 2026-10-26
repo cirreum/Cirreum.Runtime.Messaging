@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Received messages dispatch inside a host invocation.** When the host composes an
+  `IHostInvocationFactory` (the server package registers one), each inbound dispatch runs
+  in a host invocation sourced `queue`: handlers see an authenticated subject, a
+  `Machine` subject kind, and the receiving application's name on audit stamps, instead of
+  the anonymous caller they saw before. Without a factory the receiver keeps its plain
+  per-dispatch service scope.
+- **Envelopes carry the publishing subject.** The delivery engine fills
+  `DistributedMessageEnvelope.Subject` from the current invocation's principal and
+  effective scheme when one is current and authenticated. With
+  `ReceiverOptions.TrustEnvelopeSubject` set, the receiver runs handlers as that subject,
+  with its scheme as the origin scheme and its roles minted for the dispatch. Off by
+  default.
+
 ## [3.1.0] - 2026-10-25
 
 ### Changed
