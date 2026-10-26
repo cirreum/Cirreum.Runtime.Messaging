@@ -492,7 +492,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 				this._metricsService.RecordMessageFailed(
 				   item.Message.Subject,
 				   item.Target,
-				   ex.GetType().Name,
+				   ex.GetType().FullName ?? ex.GetType().Name,
 				   elapsedMs);
 				totalFailureCount++;
 			}
@@ -648,7 +648,7 @@ internal class DefaultBatchProcessor : IBatchProcessor, IHostedService, IDisposa
 				this._metricsService.RecordMessageFailed(
 					item.Message.Subject,
 					target,
-					ex.GetType().Name,
+					ex.GetType().FullName ?? ex.GetType().Name,
 					(int)elapsed.TotalMilliseconds);
 
 				// Complete item

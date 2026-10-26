@@ -223,7 +223,7 @@ internal sealed class DistributedMessageDeliveryEngine : IDisposable {
 			this._metricsService.RecordMessageFailed(
 				subject,
 				target,
-				ex.GetType().Name,
+				ex.GetType().FullName ?? ex.GetType().Name,
 				(long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds);
 			throw;
 		}

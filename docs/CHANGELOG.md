@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Messaging instruments move to `cirreum.messaging.*`, declare units, and record durations in
+  seconds.** The bare `messaging.*` namespace belongs to the OpenTelemetry messaging semantic
+  conventions, which the Azure Service Bus instrumentation also emits into. Update dashboards and
+  alerts:
+
+  | Before | After | Unit |
+  | ------ | ----- | ---- |
+  | `messaging.messages.received` | `cirreum.messaging.messages.received` | `{message}` |
+  | `messaging.messages.queued` | `cirreum.messaging.messages.queued` | `{message}` |
+  | `messaging.messages.delivered` | `cirreum.messaging.messages.delivered` | `{message}` |
+  | `messaging.messages.failed` | `cirreum.messaging.messages.failed` | `{message}` |
+  | `messaging.processor.queue_time` (ms, undeclared) | `cirreum.messaging.enqueue.duration` | `s` |
+  | `messaging.processor.queue_wait_time` (ms, undeclared) | `cirreum.messaging.queue_wait.duration` | `s` |
+  | `messaging.batch.publish_time` (ms, undeclared) | `cirreum.messaging.publish.duration` | `s` |
+  | `messaging.batch.processing_time` (ms, undeclared) | `cirreum.messaging.batch.processing.duration` | `s` |
+  | `messaging.batches.partial.total` | `cirreum.messaging.batches.partial` | `{batch}` |
+  | `messaging.batches.partial.size` | `cirreum.messaging.batches.partial.size` | `{message}` |
+  | `messaging.batches.partial.percentage` | `cirreum.messaging.batches.partial.percentage` | `%` (was `{%}`) |
+  | `messaging.batch.fullness` | `cirreum.messaging.batch.fullness` | `%` (was `{%}`) |
+  | `messaging.batches.processed` | `cirreum.messaging.batches.processed` | `{batch}` |
+  | `messaging.processor.queue_depth` | `cirreum.messaging.queue.depth` | `{message}` |
+
+  The duration histograms use the shared unit and bucket boundaries from
+  `CirreumTelemetry.Histograms`. The `.total` suffix is dropped — a Prometheus exporter appends
+  `_total` to counters, so the old counter exported as `…_total_total`. The meter name
+  (`Cirreum.Messaging`) is unchanged, and `IMessagingMetricsService` still takes milliseconds.
+- **Tag keys:** `error_type` is now `error.type`, per the semantic conventions, and records the
+  fully qualified exception type. `batchCapacity` is now `batch_state` — its values (`full`,
+  `partial`, `empty`, `overflow`) describe the batch, not its capacity.
+
 ## [3.0.1] - 2026-10-25
 
 ### Updated
